@@ -64,7 +64,7 @@ void menuDrawVecLetter(TFT_eSPI &tft, char c, int x, int y, int scale, int trail
     if(idx < 0) return;
     // Draw rainbow trails first (downward), white on top
     for (int t = 0; t < trailLen; t++) {
-        uint16_t color = menuRainbow[t % 7];
+        uint16_t color = menuRainbow[6 - (t % 7)];
         int trailOffset = t * scale * 2; // trail offset down
         for (int i = 0; i < MENU_vecFont[idx].n; i++) {
             int x0 = x + MENU_vecFont[idx].strokes[i].x0 * scale;
@@ -87,36 +87,30 @@ void splashScreenKnob(TFT_eSPI &tft) {
     tft.fillScreen(TFT_BLACK);
     int cx = 160, cy = 132;
     int r = 72;
-    // Knob outline
     tft.fillCircle(cx, cy, r, TFT_BLACK);
     tft.drawCircle(cx, cy, r, TFT_WHITE);
 
-    // Animate indicator sweep left to right over 3s
-    unsigned long start = millis();
-    unsigned long duration = 3000;
+    unsigned long duration = 2500;
     int nSteps = 36;
     for (int step = 0; step <= nSteps; step++) {
-        // Clear knob face
         tft.fillCircle(cx, cy, r-18, TFT_BLACK);
         tft.drawCircle(cx, cy, r-18, TFT_WHITE);
 
-        // Draw ticks/teeth (rainbow, twice as thick)
-        for (int i=0; i<18; i++) {
-            float a = -PI + i*PI/18;
-            uint16_t color = menuRainbow[i%7];
-            int x0 = cx + cos(a)*(r+4);
-            int y0 = cy + sin(a)*(r+4);
-            int x1 = cx + cos(a)*(r+17);
-            int y1 = cy + sin(a)*(r+17);
-            tft.drawLine(x0, y0, x1, y1, color);
-            tft.drawLine(x0+1, y0+1, x1+1, y1+1, color);
-        }
+        // Twice as thick ticks
+for (int i=0; i<36; i++) {
+    float a = -PI + i*(2*PI/36); // covers -PI to PI
+    uint16_t color = menuRainbow[i%7];
+    int x0 = cx + cos(a)*(r+4);
+    int y0 = cy + sin(a)*(r+4);
+    int x1 = cx + cos(a)*(r+17);
+    int y1 = cy + sin(a)*(r+17);
+    tft.drawLine(x0, y0, x1, y1, color);
+    tft.drawLine(x0+1, y0+1, x1+1, y1+1, color);
+}
 
-        // Indicator line
-        float theta = -PI/2 + (PI)*step/nSteps; // sweep from left to right
+        float theta = -PI/2 + (PI)*step/nSteps;
         for (int w=0; w<4; w++)
             tft.drawLine(cx, cy, cx+cos(theta)*(r-18-w), cy+sin(theta)*(r-18-w), menuRainbow[step%7]);
-        // Rainbow dot at tip
         int px = cx+cos(theta)*(r-18);
         int py = cy+sin(theta)*(r-18);
         tft.fillCircle(px, py, 5, menuRainbow[step%7]);
@@ -125,17 +119,18 @@ void splashScreenKnob(TFT_eSPI &tft) {
 }
 
 void drawMenuTitle(TFT_eSPI &tft) {
-    int scale = 3, trailLen = 4, spacing = 9*scale;
+    int scale = 3, trailLen = 6, spacing = 9*scale;
     const char* rotary = "ROTARY";
     const char* arcade = "ARCADE";
     int nR = 6, nA = 6;
     int textWidthR = nR * spacing;
     int textWidthA = nA * spacing;
-    int gap = 12;
+    int gap = 6;
     int totalWidth = textWidthR + gap + textWidthA;
-    int xRotary = (320 - totalWidth) / 2;
+    int offset = 5; // move right by 10 pixels (adjust as needed)
+    int xRotary = ((320 - totalWidth) / 2) + offset;
     int xArcade = xRotary + textWidthR + gap;
-    int y = 10; // Higher up
+    int y = 6; // Higher up
     for (int i = 0; i < nR; i++)
         menuDrawVecLetter(tft, rotary[i], xRotary + i * spacing, y, scale, trailLen);
     for (int i = 0; i < nA; i++)
@@ -157,41 +152,68 @@ void drawMenuItem(TFT_eSPI &tft, const char* title, int y, bool selected) {
     tft.drawString(title, cx, cy);
 }
 
+// Only redraw bubbles when selection changes
 void drawMenu(TFT_eSPI &tft, int selected, const char* const* titles, int numTitles, int visible) {
     static int last_selected = -1;
     static int last_start = -1;
     static int last_visible = -1;
+    static int prev_selected = -1;
+    static int prev_start = -1;
 
     int start = selected - visible/2;
     if (start < 0) start = 0;
     if (start > numTitles - visible) start = numTitles - visible;
     if (numTitles <= visible) start = 0;
 
-    // Only redraw menu if selection or visible section changes
-    if (selected != last_selected || start != last_start || visible != last_visible) {
+    int y0 = 66; // move menu up
+
+    // On first draw, draw everything
+    if (last_selected == -1) {
         tft.fillScreen(TFT_BLACK);
         drawMenuTitle(tft);
-        int y0 = 82; // move menu up
         for (int i=0; i<visible; i++) {
             int idx = start + i;
             int ypos = y0 + i*60;
             drawMenuItem(tft, titles[idx], ypos, idx == selected);
         }
-        last_selected = selected;
-        last_start = start;
-        last_visible = visible;
+    } else if (selected != last_selected || start != last_start || visible != last_visible) {
+        // Only redraw previously selected and newly selected bubbles
+        int prev_idx = last_selected;
+        int prev_start_idx = last_start;
+        // Redraw the previously selected as unselected
+        if (prev_idx >= 0 && prev_idx >= prev_start_idx && prev_idx < prev_start_idx+visible) {
+            int ypos = y0 + (prev_idx-prev_start_idx)*60;
+            drawMenuItem(tft, titles[prev_idx], ypos, false);
+        }
+        // Redraw the newly selected as selected
+        if (selected >= start && selected < start+visible) {
+            int ypos = y0 + (selected-start)*60;
+            drawMenuItem(tft, titles[selected], ypos, true);
+        }
+        // If the visible window scrolled, redraw all
+        if (start != last_start || visible != last_visible) {
+            tft.fillScreen(TFT_BLACK);
+            drawMenuTitle(tft);
+            for (int i=0; i<visible; i++) {
+                int idx = start + i;
+                int ypos = y0 + i*60;
+                drawMenuItem(tft, titles[idx], ypos, idx == selected);
+            }
+        }
     }
+    last_selected = selected;
+    last_start = start;
+    last_visible = visible;
 }
 
-// Rotary encoder state for menu
 void IRAM_ATTR handleRotary() {
-  bool A = digitalRead(PIN_TRA);
-  bool B = digitalRead(PIN_TRB);
-  if (A != lastA) {
-    if (A == B) rotaryPos++;
-    else rotaryPos--;
-  }
-  lastA = A;
+    bool A = digitalRead(PIN_TRA);
+    bool B = digitalRead(PIN_TRB);
+    if (A != lastA) {
+        if (A == B) rotaryPos--;   // Turning right (CW) increases, left (CCW) decreases
+        else rotaryPos++;
+        lastA = A;
+    }
 }
 
 void setup() {
@@ -201,8 +223,9 @@ void setup() {
     pinMode(PIN_TRB, INPUT_PULLUP);
     pinMode(PIN_KO, INPUT_PULLUP);
 
+    //attachInterrupt(digitalPinToInterrupt(PIN_TRA), handleRotary, CHANGE);
+    //attachInterrupt(digitalPinToInterrupt(PIN_TRB), handleRotary, CHANGE);
     attachInterrupt(digitalPinToInterrupt(PIN_TRA), handleRotary, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(PIN_TRB), handleRotary, CHANGE);
 
     tft.init();
     tft.setRotation(3); // Landscape
