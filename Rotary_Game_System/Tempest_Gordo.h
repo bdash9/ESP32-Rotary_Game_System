@@ -3,7 +3,6 @@
 
 #include <math.h>
 #include <stdlib.h>
-//#include <TFT_eSPI.h>
 
 #define PIN_KO   22
 #define PIN_PUSH 25
@@ -27,6 +26,190 @@
 #define COLOR_CARROT_TOP 0x03A0
 #define COLOR_SEGMENT_ACTIVE TFT_WHITE
 
+const uint16_t tunnelLevelColors[10] = {
+    TFT_BLUE,      // 1. Circle
+    TFT_RED,       // 2. Square
+    TFT_GREEN,     // 3. Triangle
+    TFT_YELLOW,    // 4. Star
+    TFT_CYAN,      // 5. Heart
+    TFT_MAGENTA,   // 6. Bowtie
+    TFT_ORANGE,    // 7. U-shape (define as 0xFDA0 if not defined)
+    TFT_PINK,      // 8. V-shape (define as 0xF81F if not defined)
+    TFT_DARKGREY,  // 9. Steps
+    TFT_WHITE      // 10. Infinity
+};
+
+// --- 10 geometric tunnel shapes (normalized 0..1) ---
+// --- 10 geometric tunnel shapes (normalized 0..1) ---
+const float tunnelShapes[10][NUM_RIM_POINTS][2] = {
+// 1. Circle
+{
+    {1.0,0.5},
+    {0.9808,0.6929},
+    {0.9239,0.8536},
+    {0.8315,0.9808},
+    {0.7071,1.0},
+    {0.5556,0.9808},
+    {0.5,0.9239},
+    {0.269,0.8315},
+    {0.1464,0.7071},
+    {0.0192,0.5556},
+    {0.0,0.5},
+    {0.0192,0.4444},
+    {0.1464,0.2929},
+    {0.269,0.1685},
+    {0.5,0.0761},
+    {0.7071,0.0}
+},
+// 2. Square
+{
+    {0.8,0.2},{0.8,0.35},{0.8,0.5},{0.8,0.65},
+    {0.8,0.8},{0.65,0.8},{0.5,0.8},{0.35,0.8},
+    {0.2,0.8},{0.2,0.65},{0.2,0.5},{0.2,0.35},
+    {0.2,0.2},{0.35,0.2},{0.5,0.2},{0.65,0.2}
+},
+// 3. Triangle (use your improved version if you already changed it)
+{
+    {0.50, 0.10},
+    {0.57, 0.23},
+    {0.64, 0.36},
+    {0.71, 0.49},
+    {0.78, 0.62},
+    {0.85, 0.75},
+    {0.72, 0.80},
+    {0.59, 0.85},
+    {0.46, 0.90},
+    {0.33, 0.85},
+    {0.20, 0.80},
+    {0.23, 0.67},
+    {0.26, 0.54},
+    {0.29, 0.41},
+    {0.32, 0.28},
+    {0.35, 0.15}
+},
+// 4. Star (unchanged)
+{
+    {0.5,0.07},{0.62,0.38},{0.95,0.38},{0.68,0.57},
+    {0.78,0.9},{0.5,0.7},{0.22,0.9},{0.32,0.57},
+    {0.05,0.38},{0.38,0.38},{0.5,0.07},{0.62,0.38},
+    {0.95,0.38},{0.68,0.57},{0.78,0.9},{0.5,0.7}
+},
+
+// 5. Heart – clean perimeter, no internal chord
+{
+    // Go around the heart outline counter‑clockwise
+    {0.25, 0.40},  // left mid
+    {0.22, 0.48},
+    {0.22, 0.56},
+    {0.25, 0.64},
+    {0.32, 0.74},
+    {0.40, 0.82},
+    {0.50, 0.88},  // bottom tip
+    {0.60, 0.82},
+    {0.68, 0.74},
+    {0.75, 0.64},
+    {0.78, 0.56},
+    {0.78, 0.48},
+    {0.75, 0.40},  // right upper
+    {0.68, 0.30},
+    {0.60, 0.24},
+    {0.50, 0.22}   // near the top indentation
+},
+
+// 6. Bowtie – two connected triangles (hourglass)
+{
+    // Top edge, left to right
+    {0.30, 0.20},
+    {0.40, 0.20},
+    {0.50, 0.20},
+    {0.60, 0.20},
+    {0.70, 0.20},
+
+    // Upper right down to center pinch
+    {0.72, 0.32},
+    {0.64, 0.44},
+    {0.56, 0.52},
+
+    // Center pinch to lower right
+    {0.64, 0.60},
+    {0.72, 0.72},
+    {0.70, 0.80},
+    {0.60, 0.80},
+
+    // Bottom edge back to left
+    {0.50, 0.80},
+    {0.40, 0.80},
+    {0.30, 0.80},
+
+    // Lower left up to left pinch (completes two‑triangle hourglass)
+    {0.36, 0.64}
+},
+
+// 7. U-shape – no top connecting segment
+{
+    // Left vertical of U (top to bottom)
+    {0.25, 0.20},
+    {0.25, 0.30},
+    {0.25, 0.40},
+    {0.25, 0.50},
+    {0.25, 0.60},
+
+    // Bottom curve of U (left to right)
+    {0.30, 0.72},
+    {0.40, 0.80},
+    {0.50, 0.82},
+    {0.60, 0.80},
+    {0.70, 0.72},
+
+    // Right vertical of U (bottom to top)
+    {0.75, 0.60},
+    {0.75, 0.50},
+    {0.75, 0.40},
+    {0.75, 0.30},
+    {0.75, 0.20},
+
+    // Duplicate the left‑top point to avoid a top bar:
+    // segment 15->0 has zero length, so no visible line.
+    {0.25, 0.20}
+},
+
+// 8. V-shape – (use your cleaned-up version if already changed)
+{
+    {0.25, 0.20},
+    {0.30, 0.32},
+    {0.35, 0.44},
+    {0.40, 0.56},
+    {0.45, 0.68},
+    {0.48, 0.80},
+    {0.50, 0.90},
+    {0.52, 0.80},
+    {0.55, 0.68},
+    {0.60, 0.56},
+    {0.65, 0.44},
+    {0.70, 0.32},
+    {0.75, 0.20},
+    {0.65, 0.18},
+    {0.55, 0.16},
+    {0.45, 0.16}
+},
+
+// 9. Steps (unchanged)
+{
+    {0.2,0.2},{0.2,0.35},{0.35,0.35},{0.35,0.5},
+    {0.5,0.5},{0.5,0.65},{0.65,0.65},{0.65,0.8},
+    {0.8,0.8},{0.8,0.65},{0.65,0.65},{0.65,0.5},
+    {0.5,0.5},{0.5,0.35},{0.35,0.35},{0.35,0.2}
+},
+// 10. Infinity (unchanged)
+{
+    {0.35,0.5},{0.3,0.35},{0.35,0.2},{0.5,0.2},
+    {0.65,0.2},{0.7,0.35},{0.65,0.5},{0.5,0.5},
+    {0.35,0.5},{0.3,0.65},{0.35,0.8},{0.5,0.8},
+    {0.65,0.8},{0.7,0.65},{0.65,0.5},{0.5,0.5}
+}
+};
+const int numTunnelShapes = 10;
+
 enum AlienType { FLIPPER, PULSAR };
 enum AlienState { GOING_OUT, AT_RIM, GOING_IN, AT_CENTER };
 
@@ -41,12 +224,11 @@ struct Alien {
 
 struct Shot {
   bool active;
-  float angle;
-  float pos;
-  float last_angle;
-  float last_pos; 
+  int   seg;          // which tunnel segment this carrot is in
+  float pos;          // 0.0 = at rim, 1.0 = at center
+  float last_pos;
   float last_base_pos;
-  int last_x, last_y;
+  int   last_x, last_y;
 };
 
 Shot shots[MAX_SHOTS];
@@ -60,7 +242,7 @@ RimPoint inner[NUM_RIM_POINTS];
 
 int playerScore = 0;
 int playerLives = MAX_LIVES;
-int currentLevel = 1;
+extern int currentLevel;
 
 // Splash screen vector font
 struct VecStroke { int x0, y0, x1, y1; };
@@ -147,24 +329,95 @@ void splashScreen(TFT_eSPI &tft) {
     while (digitalRead(PIN_KO) == LOW) delay(10);
 }
 
-void computeTunnelGeometry() {
-    for (int i=0; i<NUM_RIM_POINTS; i++) {
-        float angle = 2 * PI * i / NUM_RIM_POINTS;
-        rim[i].x = TUNNEL_CENTER_X + cos(angle) * TUNNEL_RADIUS;
-        rim[i].y = TUNNEL_CENTER_Y + sin(angle) * TUNNEL_RADIUS;
-        inner[i].x = TUNNEL_CENTER_X + cos(angle) * (TUNNEL_RADIUS - TUNNEL_DEPTH);
-        inner[i].y = TUNNEL_CENTER_Y + sin(angle) * (TUNNEL_RADIUS - TUNNEL_DEPTH);
+void computeTunnelGeometry(int level) {
+    int shapeIdx = (level-1) % numTunnelShapes;
+
+    if (shapeIdx == 0) {
+        // Level 1: true circle (unchanged)
+        for (int i=0; i<NUM_RIM_POINTS; i++) {
+            float angle = 2 * M_PI * i / NUM_RIM_POINTS;
+            rim[i].x = TUNNEL_CENTER_X + cos(angle) * TUNNEL_RADIUS;
+            rim[i].y = TUNNEL_CENTER_Y + sin(angle) * TUNNEL_RADIUS;
+            // Inner at center (radial tunnel)
+            inner[i].x = TUNNEL_CENTER_X;
+            inner[i].y = TUNNEL_CENTER_Y;
+        }
+    } else {
+        // Normalize shape so its furthest point has radius ~= TUNNEL_RADIUS
+        float maxR = 0.0f;
+        float dx0[NUM_RIM_POINTS], dy0[NUM_RIM_POINTS];
+
+        for (int i=0; i<NUM_RIM_POINTS; i++) {
+            float nx = tunnelShapes[shapeIdx][i][0];
+            float ny = tunnelShapes[shapeIdx][i][1];
+            dx0[i] = nx - 0.5f;
+            dy0[i] = ny - 0.5f;
+            float r = sqrtf(dx0[i]*dx0[i] + dy0[i]*dy0[i]);
+            if (r > maxR) maxR = r;
+        }
+        if (maxR < 1e-3f) maxR = 1.0f;   // safety
+
+        // Scale so max radius == TUNNEL_RADIUS
+        for (int i=0; i<NUM_RIM_POINTS; i++) {
+            float dx = dx0[i] / maxR;   // normalized to radius 1
+            float dy = dy0[i] / maxR;
+            rim[i].x = (int)(TUNNEL_CENTER_X + dx * TUNNEL_RADIUS);
+            rim[i].y = (int)(TUNNEL_CENTER_Y + dy * TUNNEL_RADIUS);
+
+            // Inner stays at center = true radial corridors
+            inner[i].x = TUNNEL_CENTER_X;
+            inner[i].y = TUNNEL_CENTER_Y;
+        }
     }
 }
 
-void drawTunnel(TFT_eSPI &tft) {
-    for (int i=0; i<NUM_RIM_POINTS; i++)
-        tft.drawLine(rim[i].x, rim[i].y, rim[(i+1)%NUM_RIM_POINTS].x, rim[(i+1)%NUM_RIM_POINTS].y, COLOR_TUNNEL_1);
-    for (int i=0; i<NUM_RIM_POINTS; i++)
-        tft.drawLine(rim[i].x, rim[i].y, inner[i].x, inner[i].y, COLOR_TUNNEL_1);
-    for (int i=0; i<NUM_RIM_POINTS; i++)
-        tft.drawLine(inner[i].x, inner[i].y, inner[(i+1)%NUM_RIM_POINTS].x, inner[(i+1)%NUM_RIM_POINTS].y, COLOR_TUNNEL_1);
+// seg: 0..NUM_RIM_POINTS-1 : corridor between i and i+1
+// depth: 0.0 = rim, 1.0 = center
+void getCorridorPoint(int seg, float depth, int &x, int &y) {
+    int i0 = seg;
+    int i1 = (seg + 1) % NUM_RIM_POINTS;
+
+    // Wall 0: rim[i0] -> inner[i0]
+    float w0x = rim[i0].x * (1.0f - depth) + inner[i0].x * depth;
+    float w0y = rim[i0].y * (1.0f - depth) + inner[i0].y * depth;
+
+    // Wall 1: rim[i1] -> inner[i1]
+    float w1x = rim[i1].x * (1.0f - depth) + inner[i1].x * depth;
+    float w1y = rim[i1].y * (1.0f - depth) + inner[i1].y * depth;
+
+    // Corridor center is midpoint between the two walls
+    x = (int)((w0x + w1x) * 0.5f);
+    y = (int)((w0y + w1y) * 0.5f);
 }
+
+void drawTunnel(TFT_eSPI &tft, int level) {
+    int shapeIdx = (level - 1) % numTunnelShapes;
+    uint16_t tunnelColor = tunnelLevelColors[shapeIdx];
+
+    // 1. Outer rim
+    for (int i = 0; i < NUM_RIM_POINTS; i++) {
+        int j = (i + 1) % NUM_RIM_POINTS;
+        tft.drawLine(rim[i].x, rim[i].y, rim[j].x, rim[j].y, tunnelColor);
+    }
+
+    // 2. Corridor walls (all shapes, including heart)
+    for (int i = 0; i < NUM_RIM_POINTS; i++) {
+        tft.drawLine(rim[i].x,   rim[i].y,
+                     inner[i].x, inner[i].y,
+                     tunnelColor);
+    }
+
+    // 3. Inner polygon (optional; with inner at center it’s just a dot)
+    /*
+    for (int i = 0; i < NUM_RIM_POINTS; i++) {
+        int j = (i + 1) % NUM_RIM_POINTS;
+        tft.drawLine(inner[i].x, inner[i].y,
+                     inner[j].x, inner[j].y,
+                     tunnelColor);
+    }
+    */
+}
+
 
 void drawSmallGordo(TFT_eSPI &tft, int x, int y) {
     tft.fillCircle(x, y, 6, COLOR_GORDO);
@@ -203,9 +456,8 @@ void drawLevel(TFT_eSPI &tft, int level) {
 }
 
 void getSegmentCenter(int segIdx, int &x, int &y) {
-    float angle = (2 * PI * (segIdx + 0.5f)) / NUM_RIM_POINTS;
-    x = TUNNEL_CENTER_X + cos(angle) * TUNNEL_RADIUS;
-    y = TUNNEL_CENTER_Y + sin(angle) * TUNNEL_RADIUS;
+    // Center of the corridor at the rim
+    getCorridorPoint(segIdx, 0.0f, x, y);
 }
 
 void drawGordo(TFT_eSPI &tft, int segIdx, bool erase = false) {
@@ -230,62 +482,99 @@ void drawGordo(TFT_eSPI &tft, int segIdx, bool erase = false) {
     tft.drawLine(x+1, y-10, x+2, y+5, vcol);
 }
 
-void drawVectorCarrot(TFT_eSPI &tft, float angle, float pos, bool erase = false, int *last_x = nullptr, int *last_y = nullptr) {
-    float r_tip = TUNNEL_RADIUS - pos * TUNNEL_DEPTH;
-    float bodyLen = 12; // shorter carrot
-    float r_base = r_tip + bodyLen; // green base at rim, tip at center
-    int tipX = TUNNEL_CENTER_X + cos(angle) * r_tip;
-    int tipY = TUNNEL_CENTER_Y + sin(angle) * r_tip;
-    int baseX = TUNNEL_CENTER_X + cos(angle) * r_base;
-    int baseY = TUNNEL_CENTER_Y + sin(angle) * r_base;
+// seg: corridor index (0..NUM_RIM_POINTS-1)
+// pos: 0.0 = at rim, 1.0 = at center
+void drawVectorCarrot(TFT_eSPI &tft,
+                      int seg,
+                      float pos,
+                      bool erase /*= false*/,
+                      int *last_x /*= nullptr*/,
+                      int *last_y /*= nullptr*/)
+{
+    // Tip position along the corridor centerline
+    int tipX, tipY;
+    getCorridorPoint(seg, pos, tipX, tipY);
+
+    // Base is a bit closer to the rim than the tip
+    float bodyFrac = 0.12f;          // length of carrot along corridor
+    float basePos  = pos - bodyFrac;
+    if (basePos < 0.0f) basePos = 0.0f;
+
+    int baseX, baseY;
+    getCorridorPoint(seg, basePos, baseX, baseY);
+
+    // Direction from base to tip (unit vector)
+    float dx = (float)tipX - (float)baseX;
+    float dy = (float)tipY - (float)baseY;
+    float len = sqrtf(dx*dx + dy*dy);
+    float ux = 0.0f, uy = 0.0f;
+    if (len > 1e-3f) {
+        ux = dx / len;
+        uy = dy / len;
+    }
+
+    // Perpendicular for width
+    float vx = -uy;
+    float vy =  ux;
+
     uint16_t carrot = erase ? TFT_BLACK : COLOR_CARROT;
-    uint16_t green = erase ? TFT_BLACK : COLOR_CARROT_TOP;
+    uint16_t green  = erase ? TFT_BLACK : COLOR_CARROT_TOP;
 
-    float bodyWid = 3; // slimmer carrot
-    int baseX1 = baseX + cos(angle + 0.18) * bodyWid;
-    int baseY1 = baseY + sin(angle + 0.18) * bodyWid;
-    int baseX2 = baseX + cos(angle - 0.18) * bodyWid;
-    int baseY2 = baseY + sin(angle - 0.18) * bodyWid;
+    // Carrot width
+    float bodyWid = 3.0f;
 
-    // Main carrot body (lines)
-    tft.drawLine(baseX1, baseY1, tipX, tipY, carrot);
-    tft.drawLine(baseX2, baseY2, tipX, tipY, carrot);
-    // Cross lines for "vector shading"
+    // Side bases for the carrot body
+    float bx1 = (float)baseX + vx * bodyWid;
+    float by1 = (float)baseY + vy * bodyWid;
+    float bx2 = (float)baseX - vx * bodyWid;
+    float by2 = (float)baseY - vy * bodyWid;
+
+    // Main carrot body: two lines from base sides to tip
+    tft.drawLine((int)bx1, (int)by1, tipX, tipY, carrot);
+    tft.drawLine((int)bx2, (int)by2, tipX, tipY, carrot);
+
+    // Cross "shading" lines
     for (int i = 1; i < 3; i++) {
-        float frac = i / 3.0;
-        int crossX1 = baseX1 + frac * (tipX - baseX1);
-        int crossY1 = baseY1 + frac * (tipY - baseY1);
-        int crossX2 = baseX2 + frac * (tipX - baseX2);
-        int crossY2 = baseY2 + frac * (tipY - baseY2);
-        tft.drawLine(crossX1, crossY1, crossX2, crossY2, carrot);
+        float frac = i / 3.0f;
+        float cx1 = bx1 + frac * ((float)tipX - bx1);
+        float cy1 = by1 + frac * ((float)tipY - by1);
+        float cx2 = bx2 + frac * ((float)tipX - bx2);
+        float cy2 = by2 + frac * ((float)tipY - by2);
+        tft.drawLine((int)cx1, (int)cy1, (int)cx2, (int)cy2, carrot);
     }
 
-    // Tip (V)
-    int tipLx = tipX + cos(angle + 0.25) * 3;
-    int tipLy = tipY + sin(angle + 0.25) * 3;
-    int tipRx = tipX + cos(angle - 0.25) * 3;
-    int tipRy = tipY + sin(angle - 0.25) * 3;
-    tft.drawLine(tipX, tipY, tipLx, tipLy, carrot);
-    tft.drawLine(tipX, tipY, tipRx, tipRy, carrot);
+    // Tip "V" using direction and perpendicular
+    float tipSpan = 3.0f;
+    float tlx = (float)tipX + ( vx * tipSpan + ux * tipSpan * 0.3f);
+    float tly = (float)tipY + ( vy * tipSpan + uy * tipSpan * 0.3f);
+    float trx = (float)tipX + (-vx * tipSpan + ux * tipSpan * 0.3f);
+    float try_ = (float)tipY + (-vy * tipSpan + uy * tipSpan * 0.3f);
+    tft.drawLine(tipX, tipY, (int)tlx, (int)tly, carrot);
+    tft.drawLine(tipX, tipY, (int)trx, (int)try_, carrot);
 
-    // Green top at rim (three lines)
-    for (float gangle = angle-0.5; gangle<=angle+0.5; gangle+=0.5) {
-        int gx = baseX + cos(gangle) * 8;
-        int gy = baseY + sin(gangle) * 8;
-        tft.drawLine(baseX, baseY, gx, gy, green);
+    // Green top at the base, fanned a bit
+    float leafLen = 8.0f;
+    for (int k = -1; k <= 1; k++) {
+        float ang = 0.4f * k;  // fan angle
+        float cx =  ux * cosf(ang) - vx * sinf(ang);
+        float cy =  uy * cosf(ang) - vy * sinf(ang);
+        float lx = (float)baseX - cx * leafLen;  // point a bit toward rim
+        float ly = (float)baseY - cy * leafLen;
+        tft.drawLine(baseX, baseY, (int)lx, (int)ly, green);
     }
-    tft.fillRect(baseX-1, baseY-5, 3, 3, green);
+    tft.fillRect(baseX - 1, baseY - 1, 3, 3, green);
 
     if (!erase && last_x && last_y) {
-        *last_x = tipX; *last_y = tipY;
+        *last_x = tipX;
+        *last_y = tipY;
     }
 }
 
+void drawSegmentFull(TFT_eSPI &tft, int segIdx, uint16_t color);
+
 void drawAlien(TFT_eSPI &tft, Alien &a, bool erase=false) {
-    float angle = 2 * PI * (a.seg + 0.5f) / NUM_RIM_POINTS;
-    float r = TUNNEL_RADIUS - a.depth * TUNNEL_DEPTH;
-    int cx = TUNNEL_CENTER_X + cos(angle) * r;
-    int cy = TUNNEL_CENTER_Y + sin(angle) * r;
+int cx, cy;
+getCorridorPoint(a.seg, a.depth, cx, cy);
 
     float sizeFactor = 1.0 - a.depth;
     int minSize = 1, maxSize = 7;
@@ -295,15 +584,19 @@ void drawAlien(TFT_eSPI &tft, Alien &a, bool erase=false) {
     int eraseMargin = 3 + (size/2);
     int eraseRadius = size + eraseMargin;
 
-    if (erase) {
-        tft.fillCircle(cx, cy, eraseRadius, TFT_BLACK);
-        tft.fillCircle(cx, cy, 5, TFT_BLACK);
-        tft.drawLine(cx-4, cy, cx+4, cy, TFT_BLACK);
-        tft.drawLine(cx, cy-4, cx, cy+4, TFT_BLACK);
-        tft.drawLine(cx-3, cy-3, cx+3, cy+3, TFT_BLACK);
-        tft.drawLine(cx-3, cy+3, cx+3, cy-3, TFT_BLACK);
-        return;
-    }
+if (erase) {
+    // Erase the alien sprite
+    tft.fillCircle(cx, cy, eraseRadius, TFT_BLACK);
+
+    // Restore the tunnel graphics for this corridor segment
+    drawSegmentFull(
+        tft,
+        a.seg,
+        tunnelLevelColors[(currentLevel - 1) % 10]
+    );
+
+    return;
+}
 
     if (a.type == FLIPPER) {
         uint16_t color = TFT_RED;
@@ -344,10 +637,20 @@ void initAliens(int nAliens) {
 }
 
 void drawSegmentFull(TFT_eSPI &tft, int segIdx, uint16_t color) {
-    int next = (segIdx+1) % NUM_RIM_POINTS;
-    tft.drawLine(rim[segIdx].x, rim[segIdx].y, rim[next].x, rim[next].y, color);
-    tft.drawLine(rim[segIdx].x, rim[segIdx].y, inner[segIdx].x, inner[segIdx].y, color);
-    tft.drawLine(rim[next].x, rim[next].y, inner[next].x, inner[next].y, color);
+    int next = (segIdx + 1) % NUM_RIM_POINTS;
+
+    // Rim edge for this segment
+    tft.drawLine(rim[segIdx].x, rim[segIdx].y,
+                 rim[next].x,   rim[next].y,
+                 color);
+
+    // Both radial walls for this segment
+    tft.drawLine(rim[segIdx].x,   rim[segIdx].y,
+                 inner[segIdx].x, inner[segIdx].y,
+                 color);
+    tft.drawLine(rim[next].x,   rim[next].y,
+                 inner[next].x, inner[next].y,
+                 color);
 }
 
 void superZapperEffect(TFT_eSPI &tft) {
@@ -365,11 +668,9 @@ void superZapperEffect(TFT_eSPI &tft) {
 void run_Tempest_Gordo(TFT_eSPI &tft) {
     splashScreen(tft); 
     tft.setRotation(3);
-    computeTunnelGeometry();
-
     tft.fillScreen(TFT_BLACK);
-    drawTunnel(tft);
-
+    computeTunnelGeometry(currentLevel);
+drawTunnel(tft, currentLevel);
     playerScore = 0;
     playerLives = MAX_LIVES;
     currentLevel = 1;
@@ -403,53 +704,82 @@ void run_Tempest_Gordo(TFT_eSPI &tft) {
         active_seg = playerSeg;
         if (active_seg != prev_active_seg) {
             if (prev_active_seg != -1)
-                drawSegmentFull(tft, prev_active_seg, COLOR_TUNNEL_1);
+            // After (correct, uses the current level color)
+drawSegmentFull(tft, prev_active_seg, tunnelLevelColors[(currentLevel-1)%10]);
             drawSegmentFull(tft, active_seg, COLOR_SEGMENT_ACTIVE);
             prev_active_seg = active_seg;
         }
 
-        // Super Zapper (one per level, rotary push)
-        int push = digitalRead(PIN_PUSH);
-        if (push == LOW && lastPush == HIGH && !superzapperUsed) {
-            for (int i=0; i<MAX_ALIENS; i++) aliens[i].alive = false;
-            superzapperUsed = true;
-            tft.fillScreen(TFT_BLACK);
-            drawTunnel(tft);
-            superZapperEffect(tft);
-            for (int i=0; i<MAX_ALIENS; i++)
-                if (aliens[i].alive) drawAlien(tft, aliens[i], false);
-            delay(600);
-            tft.fillScreen(TFT_BLACK);
-            drawTunnel(tft);
-            drawScore(tft, playerScore);
-            drawLives(tft, playerLives);
-            drawLevel(tft, currentLevel);
-        }
-        lastPush = push;
+// Super Zapper (short press) and Exit to Menu (long press ≥ 3s)
+static unsigned long pushPressStart = 0;
+
+int push = digitalRead(PIN_PUSH);
+
+// Button just pressed
+if (push == LOW && lastPush == HIGH) {
+    pushPressStart = millis();
+}
+
+// Button just released
+if (push == HIGH && lastPush == LOW) {
+    unsigned long held = millis() - pushPressStart;
+
+    if (held >= 3000) {
+        // Long press: exit back to main menu
+        tft.fillScreen(TFT_BLACK);
+        return;   // leave run_Tempest_Gordo()
+    } else if (!superzapperUsed) {
+        // Short press: Super Zapper
+        for (int i = 0; i < MAX_ALIENS; i++) aliens[i].alive = false;
+        superzapperUsed = true;
+
+        tft.fillScreen(TFT_BLACK);
+        computeTunnelGeometry(currentLevel);
+        drawTunnel(tft, currentLevel);
+        superZapperEffect(tft);
+        for (int i = 0; i < MAX_ALIENS; i++)
+            if (aliens[i].alive) drawAlien(tft, aliens[i], false);
+        delay(600);
+        tft.fillScreen(TFT_BLACK);
+        computeTunnelGeometry(currentLevel);
+        drawTunnel(tft, currentLevel);
+        drawScore(tft, playerScore);
+        drawLives(tft, playerLives);
+        drawLevel(tft, currentLevel);
+    }
+}
+
+lastPush = push;
 
         int button = digitalRead(PIN_KO);
-        if (button == LOW && lastButton == HIGH) {
-            for (int i=0; i<MAX_SHOTS; i++) {
-                if (!shots[i].active) {
-                    shots[i].active = true;
-                    shots[i].angle = angle;
-                    shots[i].pos = 0.0;
-                    shots[i].last_angle = angle;
-                    shots[i].last_pos = 0.0;
-                    shots[i].last_base_pos = 0.0;
-                    shots[i].last_x = -1;
-                    shots[i].last_y = -1;
-                    break;
-                }
-            }
+if (button == LOW && lastButton == HIGH) {
+    for (int i=0; i<MAX_SHOTS; i++) {
+        if (!shots[i].active) {
+            shots[i].active      = true;
+            shots[i].seg         = playerSeg; // bind to current segment
+            shots[i].pos         = 0.0f;
+            shots[i].last_pos    = 0.0f;
+            shots[i].last_base_pos = 0.0f;
+            shots[i].last_x      = -1;
+            shots[i].last_y      = -1;
+            break;
         }
+    }
+}
         lastButton = button;
 
-        static int prevBunnySeg = -1;
-        if (prevBunnySeg != -1 && prevBunnySeg != playerSeg)
-            drawGordo(tft, prevBunnySeg, true);
-        drawGordo(tft, playerSeg, false);
-        prevBunnySeg = playerSeg;
+static int prevBunnySeg = -1;
+if (prevBunnySeg != -1 && prevBunnySeg != playerSeg) {
+    // Erase old Gordo
+    drawGordo(tft, prevBunnySeg, true);
+    // Restore the tunnel graphics for that segment
+    drawSegmentFull(tft,
+                    prevBunnySeg,
+                    tunnelLevelColors[(currentLevel - 1) % 10]);
+}
+
+drawGordo(tft, playerSeg, false);
+prevBunnySeg = playerSeg;
 
         // --- Staggered alien release ---
         if (aliensReleased < aliensPerLevel && alienReleaseFrame % 28 == 0) {
@@ -485,7 +815,8 @@ void run_Tempest_Gordo(TFT_eSPI &tft) {
                     playerLives--;
                     drawLives(tft, playerLives);
                     tft.fillScreen(TFT_BLACK);
-                    drawTunnel(tft);
+                                computeTunnelGeometry(currentLevel);
+drawTunnel(tft, currentLevel);
                     tft.setTextColor(TFT_RED, TFT_BLACK);
                     tft.setTextFont(4);
                     tft.setTextDatum(MC_DATUM);
@@ -505,7 +836,8 @@ void run_Tempest_Gordo(TFT_eSPI &tft) {
                     aliensReleased = 0;
                     alienReleaseFrame = 0;
                     tft.fillScreen(TFT_BLACK);
-                    drawTunnel(tft);
+                                computeTunnelGeometry(currentLevel);
+drawTunnel(tft, currentLevel);
                     drawScore(tft, playerScore);
                     drawLives(tft, playerLives);
                     drawLevel(tft, currentLevel);
@@ -538,27 +870,48 @@ void run_Tempest_Gordo(TFT_eSPI &tft) {
             // ---- Collision with carrot ----
             for (int j=0; j<MAX_SHOTS; j++) {
                 if (!shots[j].active) continue;
-                float a_r = TUNNEL_RADIUS - aliens[i].depth * TUNNEL_DEPTH;
-                int a_x = TUNNEL_CENTER_X + cos(2*PI*(aliens[i].seg+0.5)/NUM_RIM_POINTS) * a_r;
-                int a_y = TUNNEL_CENTER_Y + sin(2*PI*(aliens[i].seg+0.5)/NUM_RIM_POINTS) * a_r;
-                float c_r = TUNNEL_RADIUS - shots[j].pos * TUNNEL_DEPTH;
-                int c_x = TUNNEL_CENTER_X + cos(shots[j].angle) * c_r;
-                int c_y = TUNNEL_CENTER_Y + sin(shots[j].angle) * c_r;
-                if (abs(a_x - c_x) < 10 && abs(a_y - c_y) < 10) {
-                    drawAlien(tft, aliens[i], true); // erase again
-                    aliens[i].alive = false;
-                    shots[j].active = false;
-                    playerScore += 100;
-                    tft.fillRect(0, 0, 40, 20, TFT_BLACK);
-                    drawScore(tft, playerScore);
-                }
+// Alien position using rim/inner interpolation
+int a_x = (int)(rim[aliens[i].seg].x   * (1.0f - aliens[i].depth) +
+                inner[aliens[i].seg].x * aliens[i].depth);
+int a_y = (int)(rim[aliens[i].seg].y   * (1.0f - aliens[i].depth) +
+                inner[aliens[i].seg].y * aliens[i].depth);
+
+// Carrot tip using same interpolation
+int c_x = (int)(rim[shots[j].seg].x   * (1.0f - shots[j].pos) +
+                inner[shots[j].seg].x * shots[j].pos);
+int c_y = (int)(rim[shots[j].seg].y   * (1.0f - shots[j].pos) +
+                inner[shots[j].seg].y * shots[j].pos);
+if (abs(a_x - c_x) < 10 && abs(a_y - c_y) < 10) {
+    // Erase alien
+    drawAlien(tft, aliens[i], true);
+    aliens[i].alive = false;
+
+    // Erase the carrot that hit it
+    drawVectorCarrot(tft, shots[j].seg, shots[j].pos, true, nullptr, nullptr);
+
+    // Restore the tunnel graphics for that corridor segment
+    drawSegmentFull(
+        tft,
+        shots[j].seg,
+        tunnelLevelColors[(currentLevel - 1) % 10]
+    );
+
+    // Deactivate the shot
+    shots[j].active = false;
+
+    // Update score display
+    playerScore += 100;
+    tft.fillRect(0, 0, 40, 20, TFT_BLACK);
+    drawScore(tft, playerScore);
+}
             }
         }
 
         // --- Level up if all aliens dead ---
         if (aliveAliens == 0 && aliensReleased == aliensPerLevel) {
             tft.fillScreen(TFT_BLACK);
-            drawTunnel(tft);
+                        computeTunnelGeometry(currentLevel);
+drawTunnel(tft, currentLevel);
             drawScore(tft, playerScore);
             drawLives(tft, playerLives);
             tft.setTextColor(COLOR_LEVEL, TFT_BLACK);
@@ -576,7 +929,8 @@ void run_Tempest_Gordo(TFT_eSPI &tft) {
             aliensReleased = 0;
             alienReleaseFrame = 0;
             tft.fillScreen(TFT_BLACK);
-            drawTunnel(tft);
+                        computeTunnelGeometry(currentLevel);
+drawTunnel(tft, currentLevel);
             drawScore(tft, playerScore);
             drawLives(tft, playerLives);
             drawLevel(tft, currentLevel);
@@ -584,33 +938,31 @@ void run_Tempest_Gordo(TFT_eSPI &tft) {
             initAliens(aliensPerLevel);
         }
 
-for (int i=0; i<MAX_SHOTS; i++) {
-    if (shots[i].active) {
-        // Erase along the swept path from last_pos to current pos, in small steps
-        float from = shots[i].last_pos;
-        float to = shots[i].pos;
-        if (from > to) { float tmp=from; from=to; to=tmp; }
-        for (float p = from; p <= to; p += 0.01) {
-            drawVectorCarrot(tft, shots[i].angle, p, true, nullptr, nullptr);
-        }
+for (int i = 0; i < MAX_SHOTS; i++) {
+    if (!shots[i].active) continue;
 
-        shots[i].last_pos = shots[i].pos;
-        shots[i].last_angle = shots[i].angle;
+    // 1) Erase carrot at its current position
+    drawVectorCarrot(tft, shots[i].seg, shots[i].pos, true, nullptr, nullptr);
 
-        shots[i].pos += 0.06;
+    // Restore the tunnel graphics for this segment (walls + rim)
+    drawSegmentFull(
+        tft,
+        shots[i].seg,
+        tunnelLevelColors[(currentLevel - 1) % 10]
+    );
 
-        if (shots[i].pos > 1.0) {
-            // Scrub from last_pos to tip (center)
-            for (float p = shots[i].last_pos; p <= 1.0; p += 0.01) {
-                drawVectorCarrot(tft, shots[i].angle, p, true, nullptr, nullptr);
-            }
-            shots[i].active = false;
-            shots[i].last_pos = -1.0;
-            shots[i].last_angle = 0.0;
-        } else {
-            drawVectorCarrot(tft, shots[i].angle, shots[i].pos, false, &shots[i].last_x, &shots[i].last_y);
-        }
+    // 2) Advance the shot
+    shots[i].pos += 0.06f;
+
+    // 3) If it has gone past the center, stop it
+    if (shots[i].pos > 1.0f) {
+        shots[i].active = false;
+        continue;
     }
+
+    // 4) Draw carrot at the new position
+    drawVectorCarrot(tft, shots[i].seg, shots[i].pos, false,
+                     &shots[i].last_x, &shots[i].last_y);
 }
 
 
