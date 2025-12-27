@@ -35,10 +35,11 @@ const int PIN_SD_SCLK = 14;
 GPIOS:
 
 Rotary and button GPIO’s
-TRA      19
-TRB      21
-PUSH     22  // KO button and not PUSH GPIO
-Rotary PUSH is 25
+TRA      	19
+TRB      	21
+PUSH    	 22  // KO button and not PUSH GPIO
+KO	22
+
 
 TFT:
 SCK	- 18
@@ -51,7 +52,30 @@ VCC	- 3.3v
 BLK	- 3.3v
 
 SD:
-CS   = 13;
-MOSI = 15;
-MISO = 2;
-SCLK = 14;
+CS   = 	13;
+MOSI = 	15;
+MISO =	 2;
+SCLK =	 14;
+
+
+PCM5102A          ESP32
+BCK            → GPIO 26
+LRCK (or LCK)  → GPIO 25  
+DIN (or DATA)  → GPIO 33
+SCK            → Leave unconnected (or tie to GND)
+VIN            → 3.3V
+GND            → GND
+FMT            → GND
+XSMT           → 3.3V
+PCM510x Output    PAM8302A Input
+ROUT (or AOUT)  -> A+ (Audio In+)
+AGND             -> A- (Audio In-)
+
+Double check this…
+PAM8302A (sound):
+A+ (Audio IN+)   	GPIO 26 (DAC2)     
+A- (Audio IN-)   	GND                         
+SD (Shutdown)    	3.3v 
+5V              		5V           
+GND              	GND                         
+4-BR Load           	4-8Ω Speaker                 
