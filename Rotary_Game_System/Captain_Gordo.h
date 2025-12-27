@@ -931,12 +931,18 @@ void run_CG_ChaseIntro(TFT_eSPI &tft) {
     }
     
     cg_initStarfield(0);
-    tft.fillScreen(COLOR_BG);
+    tft.fillScreen(COLOR_BG);  // Only clear once at start
 
     float carrotX = -CARROT_SHIP_W - 24;
     float carrotY = SCREEN_H / 2;
+    float prevCarrotX = carrotX;  // Track previous position
+    float prevCarrotY = carrotY;
+    
     float alienX = -SHIP_W * 2 - 100;
     float alienY = carrotY - 30;
+    float prevAlienX = alienX;  // Track previous position
+    float prevAlienY = alienY;
+    
     bool showAlien = false;
     bool fireLasers = false;
     int shotsFired = 0;
@@ -944,6 +950,8 @@ void run_CG_ChaseIntro(TFT_eSPI &tft) {
     
     float warningLaserX = -30;
     float warningLaserY = carrotY - 40;
+    float prevWarningLaserX = warningLaserX;  // Track previous position
+    float prevWarningLaserY = warningLaserY;
     bool warningLaserActive = false;
     
     struct Laser { float x, y; bool active; int lifetime; };
@@ -952,6 +960,8 @@ void run_CG_ChaseIntro(TFT_eSPI &tft) {
         {-40, carrotY+30, false, 0},
         {-40, carrotY+35, false, 0}
     };
+    Laser prevLasers[3];  // Track previous laser positions
+    for (int i = 0; i < 3; i++) prevLasers[i] = lasers[i];
 
     int frame = 0;
     
@@ -963,11 +973,21 @@ void run_CG_ChaseIntro(TFT_eSPI &tft) {
             return;
         }
         
-        tft.fillScreen(COLOR_BG);
+        // Erase and move starfield
+        cg_eraseStarfield(tft);
+        cg_moveStarfield();
         cg_drawStarfield(tft);
 
+        // Erase carrot at old position
+        cg_drawVectorCarrot(tft, (int)prevCarrotX, (int)prevCarrotY, true);
+        
+        // Move carrot
         carrotX += 4.2f;
+        
+        // Draw carrot at new position
         cg_drawVectorCarrot(tft, (int)carrotX, (int)carrotY, false);
+        prevCarrotX = carrotX;
+        prevCarrotY = carrotY;
         
         if (carrotX > SCREEN_W/4 && !warningLaserActive) {
             warningLaserActive = true;
@@ -975,24 +995,42 @@ void run_CG_ChaseIntro(TFT_eSPI &tft) {
             warningLaserY = carrotY - 40;
         }
         
-        if (warningLaserActive) {
-            warningLaserX += 12.0f;
-            
-            uint16_t blue = TFT_BLUE;
-            uint16_t cyan = TFT_CYAN;
-            int lx = (int)warningLaserX;
-            int ly = (int)warningLaserY;
-            tft.drawLine(lx, ly-2, lx+22, ly, cyan);
-            tft.drawLine(lx, ly, lx+22, ly+2, blue);
-            tft.drawLine(lx, ly+2, lx+22, ly+4, cyan);
-            
-            if (warningLaserX > SCREEN_W + 30) {
-                warningLaserActive = false;
-            }
-        }
+if (warningLaserActive) {
+    // Erase warning laser at old position
+    uint16_t bg = COLOR_BG;
+    int lx = (int)prevWarningLaserX;
+    int ly = (int)prevWarningLaserY;
+    tft.drawLine(lx, ly-2, lx+22, ly, bg);
+    tft.drawLine(lx, ly, lx+22, ly+2, bg);
+    tft.drawLine(lx, ly+2, lx+22, ly+4, bg);
+    
+    // Move warning laser
+    warningLaserX += 12.0f;
+    
+    // Draw warning laser at new position (if still on screen)
+    if (warningLaserX <= SCREEN_W + 30) {
+        uint16_t blue = TFT_BLUE;
+        uint16_t cyan = TFT_CYAN;
+        lx = (int)warningLaserX;
+        ly = (int)warningLaserY;
+        tft.drawLine(lx, ly-2, lx+22, ly, cyan);
+        tft.drawLine(lx, ly, lx+22, ly+2, blue);
+        tft.drawLine(lx, ly+2, lx+22, ly+4, cyan);
+        
+        prevWarningLaserX = warningLaserX;
+        prevWarningLaserY = warningLaserY;
+    } else {
+        // Laser went off screen - erase final position before deactivating
+        lx = (int)warningLaserX;
+        ly = (int)warningLaserY;
+        tft.drawLine(lx, ly-2, lx+22, ly, bg);
+        tft.drawLine(lx, ly, lx+22, ly+2, bg);
+        tft.drawLine(lx, ly+2, lx+22, ly+4, bg);
+        warningLaserActive = false;
+    }
+}
 
         delay(28);
-        cg_moveStarfield();
         frame++;
     }
     
@@ -1007,17 +1045,60 @@ void run_CG_ChaseIntro(TFT_eSPI &tft) {
             tft.fillScreen(COLOR_BG);
             return;
         }
-        
-        tft.fillScreen(COLOR_BG);
+
+        // Erase and move starfield
+        cg_eraseStarfield(tft);
+        cg_moveStarfield();
         cg_drawStarfield(tft);
 
+            if (warningLaserActive) {
+        // Erase warning laser at old position
+        uint16_t bg = COLOR_BG;
+        int lx = (int)prevWarningLaserX;
+        int ly = (int)prevWarningLaserY;
+        tft.drawLine(lx, ly-2, lx+22, ly, bg);
+        tft.drawLine(lx, ly, lx+22, ly+2, bg);
+        tft.drawLine(lx, ly+2, lx+22, ly+4, bg);
+        
+        // Move warning laser
+        warningLaserX += 12.0f;
+        
+        // Draw warning laser at new position (if still on screen)
+        if (warningLaserX <= SCREEN_W + 30) {
+            uint16_t blue = TFT_BLUE;
+            uint16_t cyan = TFT_CYAN;
+            lx = (int)warningLaserX;
+            ly = (int)warningLaserY;
+            tft.drawLine(lx, ly-2, lx+22, ly, cyan);
+            tft.drawLine(lx, ly, lx+22, ly+2, blue);
+            tft.drawLine(lx, ly+2, lx+22, ly+4, cyan);
+            
+            prevWarningLaserX = warningLaserX;
+            prevWarningLaserY = warningLaserY;
+        } else {
+            warningLaserActive = false;
+        }
+    }
+
+        // Erase carrot at old position
         if (carrotX < SCREEN_W + 40) {
+            cg_drawVectorCarrot(tft, (int)prevCarrotX, (int)prevCarrotY, true);
             carrotX += 4.2f;
             cg_drawVectorCarrot(tft, (int)carrotX, (int)carrotY, false);
+            prevCarrotX = carrotX;
+            prevCarrotY = carrotY;
         }
 
+        // Erase alien at old position
+        cg_drawVectorShip(tft, (int)prevAlienX, (int)prevAlienY, true);
+        
+        // Move alien
         alienX += 5.5f;
+        
+        // Draw alien at new position
         cg_drawVectorShip(tft, (int)alienX, (int)alienY, false);
+        prevAlienX = alienX;
+        prevAlienY = alienY;
 
         if (!fireLasers && alienX > 20) {
             fireLasers = true;
@@ -1042,20 +1123,32 @@ void run_CG_ChaseIntro(TFT_eSPI &tft) {
             
             for (int i=0; i<3; i++) {
                 if (lasers[i].active) {
+                    // Erase laser at old position
+                    uint16_t bg = COLOR_BG;
+                    int lx = (int)prevLasers[i].x;
+                    int ly = (int)prevLasers[i].y;
+                    tft.drawLine(lx, ly-2, lx+22, ly, bg);
+                    tft.drawLine(lx, ly, lx+22, ly+2, bg);
+                    tft.drawLine(lx, ly+2, lx+22, ly+4, bg);
+                    
+                    // Move laser
                     lasers[i].x += 12.0f;
                     lasers[i].lifetime++;
                     
-                    uint16_t blue = TFT_BLUE;
-                    uint16_t cyan = TFT_CYAN;
-                    int lx = (int)lasers[i].x;
-                    int ly = (int)lasers[i].y;
-                    tft.drawLine(lx, ly-2, lx+22, ly, cyan);
-                    tft.drawLine(lx, ly, lx+22, ly+2, blue);
-                    tft.drawLine(lx, ly+2, lx+22, ly+4, cyan);
-                    
-                    if (lasers[i].x > SCREEN_W + 30) {
+                    // Draw laser at new position
+                    if (lasers[i].x <= SCREEN_W + 30) {
+                        uint16_t blue = TFT_BLUE;
+                        uint16_t cyan = TFT_CYAN;
+                        lx = (int)lasers[i].x;
+                        ly = (int)lasers[i].y;
+                        tft.drawLine(lx, ly-2, lx+22, ly, cyan);
+                        tft.drawLine(lx, ly, lx+22, ly+2, blue);
+                        tft.drawLine(lx, ly+2, lx+22, ly+4, cyan);
+                    } else {
                         lasers[i].active = false;
                     }
+                    
+                    prevLasers[i] = lasers[i];
                 }
             }
             
@@ -1071,12 +1164,11 @@ void run_CG_ChaseIntro(TFT_eSPI &tft) {
         }
 
         delay(28);
-        cg_moveStarfield();
         frame++;
     }
     
     delay(300);
-    tft.fillScreen(COLOR_BG);
+    tft.fillScreen(COLOR_BG);  // Final clear at end
 }
     
 
