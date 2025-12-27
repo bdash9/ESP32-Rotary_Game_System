@@ -4,6 +4,9 @@
 #include <Arduino.h>
 #include <TFT_eSPI.h>
 
+extern void playSound(const char *path, bool stopCurrent = true);
+extern void updateAudio();
+
 #define SCREEN_W 320
 #define SCREEN_H 240
 #define STAR_COUNT 28
@@ -66,6 +69,9 @@ struct EnemyBullet {
     bool active;
 };
 EnemyBullet enemyBullets[MAX_ENEMY_BULLETS];
+
+// Global cutscene skip flag
+bool skipAllCutscenes = false;
 
 // --- Vector Font (with H, E, S, etc) ---
 struct CG_VecStroke { int x0, y0, x1, y1; };
@@ -265,7 +271,7 @@ void cg_drawVectorCarrot(TFT_eSPI &tft, int x, int y, bool erase=false) {
     tft.drawLine(x+CARROT_SHIP_W-8, y-1, x+CARROT_SHIP_W-2, y-1, cockpit);
 }
 
-// NEW: Vertical carrot ship (pointing up)
+// Vertical carrot ship (pointing up) - GREEN AND JETS AT BOTTOM (back)
 void cg_drawVectorCarrotVertical(TFT_eSPI &tft, int x, int y, bool erase=false) {
     uint16_t carrot = erase ? COLOR_BG : COLOR_CARROT;
     uint16_t green = erase ? COLOR_BG : COLOR_CARROT_TOP;
@@ -273,19 +279,19 @@ void cg_drawVectorCarrotVertical(TFT_eSPI &tft, int x, int y, bool erase=false) 
     uint16_t jet2 = erase ? COLOR_BG : COLOR_JET2;
     uint16_t cockpit = erase ? COLOR_BG : TFT_CYAN;
     
-    // Main body (vertical)
+    // Main body (vertical, pointing up)
     tft.drawLine(x, y, x, y-CARROT_SHIP_W, carrot);
     tft.drawLine(x-4, y, x-4, y-CARROT_SHIP_W+4, carrot);
     tft.drawLine(x+4, y, x+4, y-CARROT_SHIP_W+4, carrot);
     tft.drawLine(x, y-CARROT_SHIP_W, x-4, y-CARROT_SHIP_W+4, carrot);
     tft.drawLine(x, y-CARROT_SHIP_W, x+4, y-CARROT_SHIP_W+4, carrot);
     
-    // Green top
-    tft.drawLine(x, y-CARROT_SHIP_W, x-6, y-CARROT_SHIP_W-6, green);
-    tft.drawLine(x, y-CARROT_SHIP_W, x, y-CARROT_SHIP_W-7, green);
-    tft.drawLine(x, y-CARROT_SHIP_W, x+6, y-CARROT_SHIP_W-6, green);
+    // Green leaves (AT BOTTOM - back of ship with engine)
+    tft.drawLine(x, y, x-6, y+6, green);
+    tft.drawLine(x, y, x, y+7, green);
+    tft.drawLine(x, y, x+6, y+6, green);
     
-    // Jets (pointing down)
+    // Jets (AT BOTTOM - shooting downward from back)
     tft.drawLine(x, y+8, x, y+18, jet1);
     tft.drawLine(x-2, y+8, x-4, y+16, jet2);
     tft.drawLine(x+2, y+8, x+4, y+16, jet2);
@@ -296,7 +302,7 @@ void cg_drawVectorCarrotVertical(TFT_eSPI &tft, int x, int y, bool erase=false) 
     tft.drawLine(x-1, y-CARROT_SHIP_W+8, x-1, y-CARROT_SHIP_W+2, cockpit);
 }
 
-// NEW: Carrot ship facing LEFT (for level 3)
+// Carrot ship facing LEFT - GREEN AND JETS AT RIGHT (back)
 void cg_drawVectorCarrotLeft(TFT_eSPI &tft, int x, int y, bool erase=false) {
     uint16_t carrot = erase ? COLOR_BG : COLOR_CARROT;
     uint16_t green = erase ? COLOR_BG : COLOR_CARROT_TOP;
@@ -311,12 +317,12 @@ void cg_drawVectorCarrotLeft(TFT_eSPI &tft, int x, int y, bool erase=false) {
     tft.drawLine(x-CARROT_SHIP_W, y, x-CARROT_SHIP_W+4, y-4, carrot);
     tft.drawLine(x-CARROT_SHIP_W, y, x-CARROT_SHIP_W+4, y+4, carrot);
     
-    // Green top (pointing left)
-    tft.drawLine(x-CARROT_SHIP_W, y, x-CARROT_SHIP_W-6, y-6, green);
-    tft.drawLine(x-CARROT_SHIP_W, y, x-CARROT_SHIP_W-7, y, green);
-    tft.drawLine(x-CARROT_SHIP_W, y, x-CARROT_SHIP_W-6, y+6, green);
+    // Green leaves (AT RIGHT - back of ship with engine)
+    tft.drawLine(x, y, x+6, y-6, green);
+    tft.drawLine(x, y, x+7, y, green);
+    tft.drawLine(x, y, x+6, y+6, green);
     
-    // Jets (pointing right, since ship faces left)
+    // Jets (AT RIGHT - shooting rightward from back)
     tft.drawLine(x+8, y, x+18, y, jet1);
     tft.drawLine(x+8, y-2, x+16, y-4, jet2);
     tft.drawLine(x+8, y+2, x+16, y+4, jet2);
@@ -624,9 +630,10 @@ void captainGordoSplash(TFT_eSPI &tft) {
     int lastBtn = HIGH;
     bool buttonPressed = false;
     while (!buttonPressed) {
-        cg_eraseStarfield(tft);
-        cg_moveStarfield();
-        cg_drawStarfield(tft);
+    
+    cg_eraseStarfield(tft);
+    cg_moveStarfield();
+    cg_drawStarfield(tft);
 
         cgDrawVecText(tft, splash1, x1, y1, title_scale, TFT_WHITE);
         cgDrawVecText(tft, splash2, x2, y2, title_scale, TFT_WHITE);
@@ -917,9 +924,13 @@ void cg_drawGameOver(TFT_eSPI &tft) {
     cgDrawVecText(tft, "OVER", 66, 110, 5, TFT_RED); // FIXED: Moved up from 140 to 110
 }
 
-// --------- Intro Chase Scene (carrot chased by alien ship, lasers) ---------
 void run_CG_ChaseIntro(TFT_eSPI &tft) {
-    cg_initStarfield(0);  // White stars for cutscene
+    if (skipAllCutscenes) {
+        tft.fillScreen(COLOR_BG);
+        return;
+    }
+    
+    cg_initStarfield(0);
     tft.fillScreen(COLOR_BG);
 
     float carrotX = -CARROT_SHIP_W - 24;
@@ -931,26 +942,23 @@ void run_CG_ChaseIntro(TFT_eSPI &tft) {
     int shotsFired = 0;
     int shotDelay = 0;
     
-    // FIXED: Warning shot laser
     float warningLaserX = -30;
     float warningLaserY = carrotY - 40;
     bool warningLaserActive = false;
     
-    // FIXED: 1 laser from top wing, 2 lasers from bottom wing
     struct Laser { float x, y; bool active; int lifetime; };
     Laser lasers[3] = {
-        {-40, carrotY-30, false, 0},  // Top wing
-        {-40, carrotY+30, false, 0},  // Bottom wing 1
-        {-40, carrotY+35, false, 0}   // Bottom wing 2
+        {-40, carrotY-30, false, 0},
+        {-40, carrotY+30, false, 0},
+        {-40, carrotY+35, false, 0}
     };
 
     int frame = 0;
     
-    // Phase 1: Carrot enters alone until 1/4 across, then warning shot
     while (carrotX < SCREEN_W/2 && !showAlien) {
-        // FIXED: Check for button press to skip
-        if (digitalRead(PIN_PUSH) == LOW) {
-            while (digitalRead(PIN_PUSH) == LOW) delay(10);
+        if (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) {
+            while (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) delay(10);
+            skipAllCutscenes = true;
             tft.fillScreen(COLOR_BG);
             return;
         }
@@ -961,18 +969,15 @@ void run_CG_ChaseIntro(TFT_eSPI &tft) {
         carrotX += 4.2f;
         cg_drawVectorCarrot(tft, (int)carrotX, (int)carrotY, false);
         
-        // FIXED: Fire warning shot when carrot is 1/4 across screen
         if (carrotX > SCREEN_W/4 && !warningLaserActive) {
             warningLaserActive = true;
             warningLaserX = -30;
             warningLaserY = carrotY - 40;
         }
         
-        // Draw and move warning laser
         if (warningLaserActive) {
             warningLaserX += 12.0f;
             
-            // Draw blue laser
             uint16_t blue = TFT_BLUE;
             uint16_t cyan = TFT_CYAN;
             int lx = (int)warningLaserX;
@@ -981,7 +986,6 @@ void run_CG_ChaseIntro(TFT_eSPI &tft) {
             tft.drawLine(lx, ly, lx+22, ly+2, blue);
             tft.drawLine(lx, ly+2, lx+22, ly+4, cyan);
             
-            // Remove warning laser after it passes
             if (warningLaserX > SCREEN_W + 30) {
                 warningLaserActive = false;
             }
@@ -992,16 +996,14 @@ void run_CG_ChaseIntro(TFT_eSPI &tft) {
         frame++;
     }
     
-    // Phase 2: Carrot reaches halfway, alien appears
     showAlien = true;
     alienX = -SHIP_W*2-100;
     alienY = carrotY - 30;
     
-    // Phase 3: Both move, alien catches up and shoots TWICE
     while (alienX < SCREEN_W + SHIP_W*2 + 100) {
-        // FIXED: Check for button press to skip
-        if (digitalRead(PIN_PUSH) == LOW) {
-            while (digitalRead(PIN_PUSH) == LOW) delay(10);
+        if (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) {
+            while (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) delay(10);
+            skipAllCutscenes = true;
             tft.fillScreen(COLOR_BG);
             return;
         }
@@ -1009,17 +1011,14 @@ void run_CG_ChaseIntro(TFT_eSPI &tft) {
         tft.fillScreen(COLOR_BG);
         cg_drawStarfield(tft);
 
-        // Carrot keeps moving
         if (carrotX < SCREEN_W + 40) {
             carrotX += 4.2f;
             cg_drawVectorCarrot(tft, (int)carrotX, (int)carrotY, false);
         }
 
-        // Alien moves faster to catch up
         alienX += 5.5f;
-cg_drawVectorShip(tft, (int)alienX, (int)alienY, false);
+        cg_drawVectorShip(tft, (int)alienX, (int)alienY, false);
 
-        // Start firing when alien is on screen
         if (!fireLasers && alienX > 20) {
             fireLasers = true;
             shotDelay = 0;
@@ -1028,29 +1027,24 @@ cg_drawVectorShip(tft, (int)alienX, (int)alienY, false);
         if (fireLasers && shotsFired < 2) {
             shotDelay++;
             
-            // Fire all lasers together (1 from top wing, 2 from bottom wing)
             if (shotDelay == 10) {
                 for (int i=0; i<3; i++) {
                     lasers[i].active = true;
                     lasers[i].x = alienX + SHIP_W*2 - 10;
                     if (i == 0) {
-                        // Top wing laser
                         lasers[i].y = alienY - 35;
                     } else {
-                        // Bottom wing lasers
                         lasers[i].y = alienY + 40 + (i-1)*5;
                     }
                     lasers[i].lifetime = 0;
                 }
             }
             
-            // Move and draw active lasers
             for (int i=0; i<3; i++) {
                 if (lasers[i].active) {
                     lasers[i].x += 12.0f;
                     lasers[i].lifetime++;
                     
-                    // Draw blue lasers
                     uint16_t blue = TFT_BLUE;
                     uint16_t cyan = TFT_CYAN;
                     int lx = (int)lasers[i].x;
@@ -1059,14 +1053,12 @@ cg_drawVectorShip(tft, (int)alienX, (int)alienY, false);
                     tft.drawLine(lx, ly, lx+22, ly+2, blue);
                     tft.drawLine(lx, ly+2, lx+22, ly+4, cyan);
                     
-                    // Remove laser after traveling across screen
                     if (lasers[i].x > SCREEN_W + 30) {
                         lasers[i].active = false;
                     }
                 }
             }
             
-            // Check if all lasers finished
             bool allInactive = true;
             for (int i=0; i<3; i++) {
                 if (lasers[i].active) allInactive = false;
@@ -1086,9 +1078,14 @@ cg_drawVectorShip(tft, (int)alienX, (int)alienY, false);
     delay(300);
     tft.fillScreen(COLOR_BG);
 }
+    
 
 // -------- Asteroid Cutscene --------
 void run_CG_AsteroidCutscene(TFT_eSPI &tft) {
+       if (skipAllCutscenes) {
+        tft.fillScreen(COLOR_BG);
+        return;
+    }
     tft.fillScreen(COLOR_BG);
     cg_initStarfield(0);  // White stars for cutscene
 
@@ -1099,11 +1096,12 @@ void run_CG_AsteroidCutscene(TFT_eSPI &tft) {
 
     while (carrotX < carrotPauseX) {
         // FIXED: Check for button press to skip
-        if (digitalRead(PIN_PUSH) == LOW) {
-            while (digitalRead(PIN_PUSH) == LOW) delay(10);
-            tft.fillScreen(COLOR_BG);
-            return;
-        }
+if (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) {
+    while (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) delay(10);
+    skipAllCutscenes = true;
+    tft.fillScreen(COLOR_BG);
+    return;
+}
         
         cg_eraseStarfield(tft); cg_moveStarfield(); cg_drawStarfield(tft);
         cg_drawVectorAsteroid(tft, asteroidX, asteroidY, asteroidR, false);
@@ -1121,24 +1119,26 @@ void run_CG_AsteroidCutscene(TFT_eSPI &tft) {
     
     // FIXED: Allow skip during pause
     for (int i = 0; i < 30; i++) {
-        if (digitalRead(PIN_PUSH) == LOW) {
-            while (digitalRead(PIN_PUSH) == LOW) delay(10);
-            tft.fillScreen(COLOR_BG);
-            return;
-        }
-        delay(100);
-    }
+if (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) {
+    while (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) delay(10);
+    skipAllCutscenes = true;
+    tft.fillScreen(COLOR_BG);
+    return;
+}
+        delay(100);  // ← ADD THIS
+    }  // ← ADD THIS
     
     cg_drawBubbleWithVectorText(tft, bubble_x, bubble_y, "I CAN HIDE IN THAT", true, TFT_ORANGE, "ASTEROID.");
 
     int steps = 36;
     for (int i=0; i<steps; i++) {
         // FIXED: Check for button press to skip
-        if (digitalRead(PIN_PUSH) == LOW) {
-            while (digitalRead(PIN_PUSH) == LOW) delay(10);
-            tft.fillScreen(COLOR_BG);
-            return;
-        }
+if (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) {
+    while (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) delay(10);
+    skipAllCutscenes = true;
+    tft.fillScreen(COLOR_BG);
+    return;
+}
         
         cg_eraseStarfield(tft); cg_moveStarfield(); cg_drawStarfield(tft);
         cg_drawVectorAsteroid(tft, asteroidX, asteroidY, asteroidR, false);
@@ -1181,11 +1181,12 @@ void run_CG_AsteroidCutscene(TFT_eSPI &tft) {
     
     // FIXED: Allow skip during pause
     for (int i = 0; i < 10; i++) {
-        if (digitalRead(PIN_PUSH) == LOW) {
-            while (digitalRead(PIN_PUSH) == LOW) delay(10);
-            tft.fillScreen(COLOR_BG);
-            return;
-        }
+if (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) {
+    while (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) delay(10);
+    skipAllCutscenes = true;
+    tft.fillScreen(COLOR_BG);
+    return;
+}
         delay(100);
     }
 
@@ -1193,11 +1194,12 @@ void run_CG_AsteroidCutscene(TFT_eSPI &tft) {
     int targetX = 0;
     while (shipX < targetX) {
         // FIXED: Check for button press to skip
-        if (digitalRead(PIN_PUSH) == LOW) {
-            while (digitalRead(PIN_PUSH) == LOW) delay(10);
-            tft.fillScreen(COLOR_BG);
-            return;
-        }
+if (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) {
+    while (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) delay(10);
+    skipAllCutscenes = true;
+    tft.fillScreen(COLOR_BG);
+    return;
+}
         
         cg_eraseStarfield(tft); cg_moveStarfield(); cg_drawStarfield(tft);
         cg_drawVectorAsteroid(tft, asteroidX, asteroidY, asteroidR, false);
@@ -1219,11 +1221,12 @@ cg_drawVectorShip(tft, shipX, shipY, false);
     
     // FIXED: Allow skip during pause
     for (int i = 0; i < 10; i++) {
-        if (digitalRead(PIN_PUSH) == LOW) {
-            while (digitalRead(PIN_PUSH) == LOW) delay(10);
-            tft.fillScreen(COLOR_BG);
-            return;
-        }
+if (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) {
+    while (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) delay(10);
+    skipAllCutscenes = true;
+    tft.fillScreen(COLOR_BG);
+    return;
+}
         delay(100);
     }
     
@@ -1235,11 +1238,12 @@ cg_drawVectorShip(tft, shipX, shipY, false);
 
     for (int i=0; i<10; i++) {
         // FIXED: Check for button press to skip
-        if (digitalRead(PIN_PUSH) == LOW) {
-            while (digitalRead(PIN_PUSH) == LOW) delay(10);
-            tft.fillScreen(COLOR_BG);
-            return;
-        }
+if (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) {
+    while (digitalRead(PIN_KO) == LOW || digitalRead(PIN_PUSH) == LOW) delay(10);
+    skipAllCutscenes = true;
+    tft.fillScreen(COLOR_BG);
+    return;
+}
         
         tft.fillRect(0,0,SCREEN_W,SCREEN_H,COLOR_BG);
         delay(45);
@@ -1258,12 +1262,14 @@ void cg_drawMiniShield(TFT_eSPI &tft, int x, int y, bool available) {
     tft.drawLine(x-6, y+6, x+6, y-6, color);
 }
 
-// Draw shield around ship
-void cg_drawShield(TFT_eSPI &tft, int x, int y, bool vertical, bool erase=false, bool bossLevel=false) {
+void cg_drawShield(TFT_eSPI &tft, int x, int y, bool vertical, bool erase=false, bool bossLevel=false, bool leftFacing=false) {
     if (erase) {
         // FIXED: Larger erase area to catch all rotating energy lines
-        if (!vertical && !bossLevel) {
+        if (!vertical && !bossLevel && !leftFacing) {
             tft.fillRect(x - 20, y - 30, CARROT_SHIP_W + 50, 60, COLOR_BG);
+        } else if (!vertical && !bossLevel && leftFacing) {
+            // Level 3 - left facing ship
+            tft.fillRect(x - CARROT_SHIP_W - 30, y - 30, CARROT_SHIP_W + 50, 60, COLOR_BG);
         } else if (bossLevel) {
             // Boss level - even larger area for small ship pointing down
             tft.fillRect(x - 35, y - 35, 70, CARROT_SHIP_W + 50, COLOR_BG);
@@ -1276,8 +1282,8 @@ void cg_drawShield(TFT_eSPI &tft, int x, int y, bool vertical, bool erase=false,
     
     uint16_t color = TFT_WHITE;
     
-    if (!vertical && !bossLevel) {
-        // Horizontal mode - oval around horizontal ship
+    if (!vertical && !bossLevel && !leftFacing) {
+        // Level 1 - horizontal mode - oval around horizontal ship (right-facing)
         tft.drawEllipse(x + CARROT_SHIP_W/2, y, CARROT_SHIP_W + 10, 20, color);
         tft.drawEllipse(x + CARROT_SHIP_W/2, y, CARROT_SHIP_W + 9, 19, color);
         // Add energy lines
@@ -1286,6 +1292,19 @@ void cg_drawShield(TFT_eSPI &tft, int x, int y, bool vertical, bool erase=false,
             int x1 = x + CARROT_SHIP_W/2 + cos(angle) * (CARROT_SHIP_W + 8);
             int y1 = y + sin(angle) * 18;
             int x2 = x + CARROT_SHIP_W/2 + cos(angle) * (CARROT_SHIP_W + 12);
+            int y2 = y + sin(angle) * 22;
+            tft.drawLine(x1, y1, x2, y2, color);
+        }
+    } else if (!vertical && !bossLevel && leftFacing) {
+        // Level 3 - horizontal mode - oval around horizontal ship (left-facing)
+        tft.drawEllipse(x - CARROT_SHIP_W/2, y, CARROT_SHIP_W + 10, 20, color);
+        tft.drawEllipse(x - CARROT_SHIP_W/2, y, CARROT_SHIP_W + 9, 19, color);
+        // Add energy lines
+        for (int i = 0; i < 6; i++) {
+            float angle = (millis() / 100.0 + i * 60) * 0.01745;
+            int x1 = x - CARROT_SHIP_W/2 + cos(angle) * (CARROT_SHIP_W + 8);
+            int y1 = y + sin(angle) * 18;
+            int x2 = x - CARROT_SHIP_W/2 + cos(angle) * (CARROT_SHIP_W + 12);
             int y2 = y + sin(angle) * 22;
             tft.drawLine(x1, y1, x2, y2, color);
         }
@@ -1432,6 +1451,7 @@ void run_Captain_Gordo(TFT_eSPI &tft) {
     tft.setRotation(3);
     pinMode(PIN_KO, INPUT_PULLUP);
     pinMode(PIN_PUSH, INPUT_PULLUP);
+//  pinMode(PIN_PUSH, INPUT);
 
     int score = 0;
     int lives = MAX_LIVES;
@@ -1439,13 +1459,14 @@ void run_Captain_Gordo(TFT_eSPI &tft) {
     
     bool firstGame = true;
     
-    while (1) {  // Outer game loop (replay loop)
-        captainGordoSplash(tft);
-        if (firstGame) {
-            run_CG_ChaseIntro(tft);
-            run_CG_AsteroidCutscene(tft);
-            firstGame = false;
-        }
+while (1) {
+    captainGordoSplash(tft);
+    skipAllCutscenes = false;  // ← ADD THIS LINE - Reset skip flag for new game
+    if (firstGame) {
+        run_CG_ChaseIntro(tft);
+        run_CG_AsteroidCutscene(tft);
+        firstGame = false;
+    }
 
         // --- Initialize variables ---
         score = 0;
@@ -1459,12 +1480,15 @@ while (lives > 0) {
             bool leftFacing = (levelType == 3);
             bool bossLevel = (levelType == 4);
             
-            if (bossLevel) {
+if (bossLevel) {
                 cg_showBossSplash(tft);
                 
                 // BOSS LEVEL CODE
                 tft.fillScreen(COLOR_BG);
                 cg_initStarfield(0);  // White stars
+                
+                // Start boss music (looping)
+                playSound("/sounds/splash_Captian_Gordo.wav", true);
                 
                 for (int i=0; i<MAX_BULLETS; i++) bullets[i].active = false;
                 
@@ -1473,17 +1497,17 @@ while (lives > 0) {
                 int prevCarrotX = carrotX;
                 int prevCarrotY = carrotY;
                 
-// Boss variables
+                // Boss variables
                 int bossX = SCREEN_W / 2;
-                int bossY = SCREEN_H - 50;  // FIXED: Very close to floor (was - 80)
-float diffMult = getDifficultyMultiplier(currentGameLevel);
-int bossHealth = (int)(BOSS_MAX_HEALTH * diffMult);
-int maxBossHealth = bossHealth;  // Store for health bar
+                int bossY = SCREEN_H - 50;
+                float diffMult = getDifficultyMultiplier(currentGameLevel);
+                int bossHealth = (int)(BOSS_MAX_HEALTH * diffMult);
+                int maxBossHealth = bossHealth;
                 int bossDirection = 1;
                 int bossFireTimer = 0;
                 bool bossDefeated = false;
                 
-                struct BossBullet { float x, y, vx, vy; bool active; };
+struct BossBullet { float x, y, vx, vy; bool active; };
                 BossBullet bossBullets[MAX_BOSS_BULLETS];
                 for (int i=0; i<MAX_BOSS_BULLETS; i++) bossBullets[i].active = false;
                 
@@ -1496,15 +1520,25 @@ int maxBossHealth = bossHealth;  // Store for health bar
                 const unsigned long SHIELD_CHARGE_TIME = 30000;
                 bool prevShieldActive = false;
                 
+// Shield button tracking (must be here, before while loop)
+                unsigned long bossPushStartTime = millis();  // ← Initialize to NOW, not 0
+                bool bossPushWasHigh = (digitalRead(PIN_PUSH) == HIGH);  // ← Read actual state
+                
                 int lastScore = -1;
                 int lastLives = -1;
                 bool lastShieldAvailable = true;
                 
-              //  unsigned long levelStart = millis();
-                
-                // Boss fight loop
-                while (!bossDefeated && lives > 0) {
-                    cg_eraseStarfield(tft);
+while (!bossDefeated && lives > 0) {
+updateAudio();
+
+// Keep boss music looping (restart after sound effects)
+extern AudioGeneratorWAV *wav;
+if (!wav || !wav->isRunning()) {
+    playSound("/sounds/splash_Captian_Gordo.wav", true);  // Changed to true
+}
+
+    cg_eraseStarfield(tft);
+
                     cg_moveStarfield(false);
                     cg_drawStarfield(tft);
                     
@@ -1542,80 +1576,94 @@ int maxBossHealth = bossHealth;  // Store for health bar
                         lastLives = lives;
                     }
                     
-                    // Draw mini shield
+// Draw mini shield
                     if (shieldAvailable != lastShieldAvailable) {
                         tft.fillRect(SCREEN_W/2 - 15, 0, 30, 25, COLOR_BG);
                         lastShieldAvailable = shieldAvailable;
                     }
                     cg_drawMiniShield(tft, SCREEN_W/2, 15, shieldAvailable);
                     
-                    // Shield activation
-                    static int lastPush = HIGH;
-                    int push = digitalRead(PIN_PUSH);
-                    if (push == LOW && lastPush == HIGH && shieldAvailable && !shieldActive) {
-                        shieldActive = true;
-                        shieldAvailable = false;
-                        shieldActivatedTime = millis();
-                        shieldChargeStartTime = 0;
-                    }
-                    lastPush = push;
-                    
-                    // Update shield state
-                    if (shieldActive) {
-                        if (millis() - shieldActivatedTime > SHIELD_DURATION) {
-                            shieldActive = false;
-                            shieldChargeStartTime = millis();
-                        }
-                    } else if (!shieldAvailable) {
-                        if (millis() - shieldChargeStartTime > SHIELD_CHARGE_TIME) {
-                            shieldAvailable = true;
-                        }
-                    }
-                    
-                    // Boss health bar
-                    cg_drawBossHealth(tft, bossHealth, maxBossHealth);
-                    
+
+// UNIFIED BUTTON: Tap = Fire, Hold 0.5s = Shield
+static int lastBtn = HIGH;
+int btn = digitalRead(PIN_KO);
+
+if (btn == LOW) {
+    if (lastBtn == HIGH) {
+        // Button just pressed - start timer
+        bossPushStartTime = millis();
+    } else {
+        // Button still held - check for shield activation
+        unsigned long holdTime = millis() - bossPushStartTime;
+        if (holdTime >= 500 && shieldAvailable && !shieldActive) {
+            // Held long enough - activate shield
+            shieldActive = true;
+            shieldAvailable = false;
+            shieldActivatedTime = millis();
+            shieldChargeStartTime = 0;
+        }
+    }
+} else if (btn == HIGH && lastBtn == LOW) {
+    // Button RELEASED - check if it was a quick tap (fire) or hold (shield)
+    unsigned long holdTime = millis() - bossPushStartTime;
+    if (holdTime < 500) {
+        // Quick tap - FIRE!
+ //       playSound("/sounds/Laser_Shoot.wav", false);
+ playSound("/sounds/Laser_Shoot.wav", true);  // Interrupt music briefly
+        for (int i=0; i<MAX_BULLETS; i++) {
+            if (!bullets[i].active) {
+                bullets[i].active = true;
+                bullets[i].x = carrotX;
+                bullets[i].y = carrotY + CARROT_SHIP_W + 2;
+                bullets[i].vx = 0;
+                bullets[i].vy = 8.0f;
+                break;
+            }
+        }
+    }
+}
+
+lastBtn = lastBtn = btn;
+
+// Update shield state
+if (shieldActive) {
+    if (millis() - shieldActivatedTime > SHIELD_DURATION) {
+        shieldActive = false;
+        shieldChargeStartTime = millis();
+    }
+} else if (!shieldAvailable) {
+    if (millis() - shieldChargeStartTime > SHIELD_CHARGE_TIME) {
+        shieldAvailable = true;
+    }
+}
+
+// Boss health bar
+cg_drawBossHealth(tft, bossHealth, maxBossHealth);
+
 // Erase carrot at old position
 if (prevShieldActive) {
-    cg_drawShield(tft, prevCarrotX, prevCarrotY, true, true, true);  // Erase shield (bossLevel=true)
+    cg_drawShield(tft, prevCarrotX, prevCarrotY, true, true, true);
 } else {
     cg_drawVectorCarrotDownSmall(tft, prevCarrotX, prevCarrotY, true);
 }
-                    
-                    // Move carrot left/right
-                    extern volatile int rotaryPos;
-                    static int lastRotary = rotaryPos;
-                    int diff = rotaryPos - lastRotary;
-                    lastRotary = rotaryPos;
-                    carrotX += diff * 4;
-                    if (carrotX < 60) carrotX = 60;
-                    if (carrotX > SCREEN_W-60) carrotX = SCREEN_W-60;
-                    
+
+// Move carrot left/right
+extern volatile int rotaryPos;
+static int lastRotary = rotaryPos;
+int diff = rotaryPos - lastRotary;
+lastRotary = rotaryPos;
+carrotX += diff * 4;
+if (carrotX < 60) carrotX = 60;
+if (carrotX > SCREEN_W-60) carrotX = SCREEN_W-60;
+
 // Draw carrot
 cg_drawVectorCarrotDownSmall(tft, carrotX, carrotY, false);
 if (shieldActive) {
-    cg_drawShield(tft, carrotX, carrotY, true, false, true);  // bossLevel=true
+    cg_drawShield(tft, carrotX, carrotY, true, false, true);
 }
-                    prevCarrotX = carrotX;
-                    prevCarrotY = carrotY;
-                    prevShieldActive = shieldActive;
-                    
-                    // Fire bullets
-                    static int lastBtn = HIGH;
-                    int btn = digitalRead(PIN_KO);
-                    if (btn == LOW && lastBtn == HIGH) {
-                        for (int i=0; i<MAX_BULLETS; i++) {
-                            if (!bullets[i].active) {
-                                bullets[i].active = true;
-                                bullets[i].x = carrotX;
-                                bullets[i].y = carrotY + CARROT_SHIP_W + 2;
-                                bullets[i].vx = 0;
-                                bullets[i].vy = 8.0f;  // Shoot down
-                                break;
-                            }
-                        }
-                    }
-                    lastBtn = btn;
+prevCarrotX = carrotX;
+prevCarrotY = carrotY;
+prevShieldActive = shieldActive;;
                     
                     // Update player bullets
                     for (int i=0; i<MAX_BULLETS; i++) {
@@ -1722,13 +1770,25 @@ if (bossFireTimer > bossFireDelay) {
                         }
                     }
                     
-                        if (lostLife) {
-                        lives--;
+if (lostLife) {
+    lives--;
 if (lives <= 0) {
+    stopAudio();  // Stop boss music
+    tft.fillScreen(COLOR_BG);
     cg_drawGameOver(tft);
-    delay(2500);
+    playSound("/sounds/game_over.wav", false);  // Play immediately
+    
+    // Keep audio playing during game over screen
+    unsigned long gameOverStart = millis();
+    while (millis() - gameOverStart < 2500) {
+        updateAudio();
+        delay(10);
+    }
+    
+    tft.fillScreen(TFT_BLACK);
+    delay(100);
     break;
-}                        
+}       
                         tft.fillScreen(COLOR_BG);
                         delay(650);
                         
@@ -1756,13 +1816,21 @@ prevShieldActive = false;
                 
 if (bossDefeated) {
     // EXPLOSION!
+    playSound("/sounds/explosion1.wav", true);
+    
     tft.fillScreen(COLOR_BG);
     for (int frame = 0; frame < 20; frame++) {
         tft.fillScreen(COLOR_BG);
         cg_drawBossFloor(tft, false);
         cg_drawHatch(tft, false);
         cg_drawBossExplosion(tft, bossX, bossY, frame);
-        delay(80);
+        
+        // Update audio during explosion animation
+        unsigned long frameStart = millis();
+        while (millis() - frameStart < 80) {
+            updateAudio();
+            delay(1);
+        }
     }
     
     // Clear screen and show closed hatch one more time
@@ -1815,7 +1883,7 @@ if (currentGameLevel == 5) {
                 if (lives <= 0) break;
                 
             } else {
-                // NORMAL LEVELS 1-3
+// NORMAL LEVELS 1-3
                 tft.fillScreen(COLOR_BG);
                 
                 // Show level transition
@@ -1842,14 +1910,14 @@ if (currentGameLevel == 5) {
                 
                 unsigned long levelStart = millis();
                 
-// Set starting position based on level type
+                // Set starting position based on level type
                 int carrotY, carrotX;
                 if (levelType == 1) {
                     carrotX = 40;
                     carrotY = SCREEN_H/2;
                 } else if (levelType == 2) {
                     carrotX = SCREEN_W/2;
-                    carrotY = SCREEN_H - 35;  // FIXED: Even closer to bottom (was - 50)
+                    carrotY = SCREEN_H - 35;
                 } else { // levelType == 3
                     carrotX = SCREEN_W - 35;
                     carrotY = SCREEN_H/2;
@@ -1858,7 +1926,7 @@ if (currentGameLevel == 5) {
                 int prevCarrotX = carrotX;
                 int prevCarrotY = carrotY;
                 
-                int batCount = 0;
+int batCount = 0;
                 int gameOver = 0;
                 
                 // SHIELD VARIABLES
@@ -1870,11 +1938,15 @@ if (currentGameLevel == 5) {
                 const unsigned long SHIELD_CHARGE_TIME = 30000;
                 bool prevShieldActive = false;
                 
+// Shield button tracking (must be here, before while loop)
+                unsigned long normalPushStartTime = millis();  // ← Initialize to NOW, not 0
+                bool normalPushWasHigh = (digitalRead(PIN_PUSH) == HIGH);  // ← Read actual state
+                
                 int lastScore = -1;
                 int lastLives = -1;
                 bool lastShieldAvailable = true;
                 
-// Enemy colors based on level
+                // Enemy colors based on level
                 uint16_t batColor, trogColor;
                 if (levelType == 1) {
                     batColor = TFT_BLUE;
@@ -1890,9 +1962,21 @@ if (currentGameLevel == 5) {
                 // Wall color
                 uint16_t wallColor = (levelType == 3) ? TFT_YELLOW : (vertical ? COLOR_WALL_VERT : COLOR_WALL);
                 
-                // --- Level Loop (1 minute per level) ---
-                while (!gameOver && (millis() - levelStart) < 60000) { // 60000 = 1 minute
-                cg_eraseStarfield(tft);
+                // --- Level Loop (1 minute per level 60000) ---
+while (!gameOver && (millis() - levelStart) < 60000) {
+
+
+// Update audio and keep music looping
+extern AudioGeneratorWAV *wav;
+if (wav && wav->isRunning()) {
+    updateAudio();
+} else {
+    // Music ended, restart it
+    playSound("/sounds/Interplanetary_Odyssey.wav", false);
+}
+cg_eraseStarfield(tft);
+
+
                     cg_moveStarfield(leftFacing, vertical);  // FIXED: Pass vertical flag
                     cg_drawStarfield(tft);
                     
@@ -1930,136 +2014,143 @@ if (currentGameLevel == 5) {
                         lastLives = lives;
                     }
                     
-                    // Draw mini shield
+// Draw mini shield
                     if (shieldAvailable != lastShieldAvailable) {
                         tft.fillRect(SCREEN_W/2 - 15, 0, 30, 25, COLOR_BG);
                         lastShieldAvailable = shieldAvailable;
                     }
                     cg_drawMiniShield(tft, SCREEN_W/2, 15, shieldAvailable);
-                    
-                    // Shield activation
-                    static int lastPush = HIGH;
-                    int push = digitalRead(PIN_PUSH);
-                    if (push == LOW && lastPush == HIGH && shieldAvailable && !shieldActive) {
-                        shieldActive = true;
-                        shieldAvailable = false;
-                        shieldActivatedTime = millis();
-                        shieldChargeStartTime = 0;
-                    }
-                    lastPush = push;
-                    
-                    // Update shield state
-                    if (shieldActive) {
-                        if (millis() - shieldActivatedTime > SHIELD_DURATION) {
-                            shieldActive = false;
-                            shieldChargeStartTime = millis();
-                        }
-                    } else if (!shieldAvailable) {
-                        if (millis() - shieldChargeStartTime > SHIELD_CHARGE_TIME) {
-                            shieldAvailable = true;
-                        }
-                    }
-                    
-                    // Erase carrot at old position
-                    if (prevShieldActive) {
-                        if (!vertical && !leftFacing) {
-                            tft.fillRect(prevCarrotX - 35, prevCarrotY - 35, CARROT_SHIP_W + 70, 70, COLOR_BG);
-                        } else if (vertical) {
-                            tft.fillRect(prevCarrotX - 35, prevCarrotY - CARROT_SHIP_W - 35, 70, CARROT_SHIP_W + 70, COLOR_BG);
-                        } else { // leftFacing
-                            tft.fillRect(prevCarrotX - CARROT_SHIP_W - 35, prevCarrotY - 35, CARROT_SHIP_W + 70, 70, COLOR_BG);
-                        }
-                    } else {
-                        if (!vertical && !leftFacing) {
-                            cg_drawVectorCarrot(tft, prevCarrotX, prevCarrotY, true);
-                        } else if (vertical) {
-                            cg_drawVectorCarrotVertical(tft, prevCarrotX, prevCarrotY, true);
-                        } else { // leftFacing
-                            cg_drawVectorCarrotLeft(tft, prevCarrotX, prevCarrotY, true);
-                        }
-                    }
-                    
-                    // Input
-                    extern volatile int rotaryPos;
-                    static int lastRotary = rotaryPos;
-                    int diff = rotaryPos - lastRotary;
-                    lastRotary = rotaryPos;
-                    
-                    if (!vertical && !leftFacing) {
-                        // Level 1: Move up/down
-                        carrotY += diff * 4;
-                        if (carrotY < CARROT_Y_MIN) carrotY = CARROT_Y_MIN;
-                        if (carrotY > CARROT_Y_MAX) carrotY = CARROT_Y_MAX;
-                    } else if (vertical) {
-                        // Level 2: Move left/right
-                        carrotX += diff * 4;
-                        int leftLimit = 80;
-                        int rightLimit = SCREEN_W - 80;
-                        if (carrotX < leftLimit) carrotX = leftLimit;
-                        if (carrotX > rightLimit) carrotX = rightLimit;
-                    } else { // leftFacing
-                        // Level 3: Move up/down
-                        carrotY += diff * 4;
-                        if (carrotY < CARROT_Y_MIN) carrotY = CARROT_Y_MIN;
-                        if (carrotY > CARROT_Y_MAX) carrotY = CARROT_Y_MAX;
-                    }
-                    
-                    // Draw carrot
-                    if (!vertical && !leftFacing) {
-                        cg_drawVectorCarrot(tft, carrotX, carrotY, false);
-                    } else if (vertical) {
-                        cg_drawVectorCarrotVertical(tft, carrotX, carrotY, false);
-                    } else { // leftFacing
-                        cg_drawVectorCarrotLeft(tft, carrotX, carrotY, false);
-                    }
-                    
-                    // Draw shield
-                    if (shieldActive) {
-                        if (!vertical && !leftFacing) {
-                            cg_drawShield(tft, carrotX, carrotY, false, false);
-                        } else if (vertical) {
-                            cg_drawShield(tft, carrotX, carrotY, true, false);
-                        } else { // leftFacing
-                            cg_drawShield(tft, carrotX, carrotY, false, false);
-                        }
-                    }
-                    
-                    prevCarrotX = carrotX;
-                    prevCarrotY = carrotY;
-                    prevShieldActive = shieldActive;
-                    
-                    // Fire bullets
-                    static int lastBtn = HIGH;
-                    int btn = digitalRead(PIN_KO);
-                    if (btn == LOW && lastBtn == HIGH) {
-                        for (int i=0; i<MAX_BULLETS; i++) {
-                            if (!bullets[i].active) {
-                                bullets[i].active = true;
-                                if (!vertical && !leftFacing) {
-                                    // Level 1: Shoot right
-                                    bullets[i].x = carrotX+CARROT_SHIP_W+2;
-                                    bullets[i].y = carrotY;
-                                    bullets[i].vx = 8.0f;
-                                    bullets[i].vy = 0;
-                                } else if (vertical) {
-                                    // Level 2: Shoot up
-                                    bullets[i].x = carrotX;
-                                    bullets[i].y = carrotY-CARROT_SHIP_W-2;
-                                    bullets[i].vx = 0;
-                                    bullets[i].vy = -8.0f;
-                                } else { // leftFacing
-                                    // Level 3: Shoot left
-                                    bullets[i].x = carrotX-CARROT_SHIP_W-2;
-                                    bullets[i].y = carrotY;
-                                    bullets[i].vx = -8.0f;
-                                    bullets[i].vy = 0;
-                                }
-                                break;
-                            }
-                        }
-                    }
-                    lastBtn = btn;
-                    
+
+
+// UNIFIED BUTTON: Tap = Fire, Hold 0.5s = Shield
+static int lastBtn = HIGH;
+int btn = digitalRead(PIN_KO);
+
+if (btn == LOW) {
+    if (lastBtn == HIGH) {
+        // Button just pressed - start timer
+        normalPushStartTime = millis();
+    } else {
+        // Button still held - check for shield activation
+        unsigned long holdTime = millis() - normalPushStartTime;
+        if (holdTime >= 500 && shieldAvailable && !shieldActive) {
+            // Held long enough - activate shield
+            shieldActive = true;
+            shieldAvailable = false;
+            shieldActivatedTime = millis();
+            shieldChargeStartTime = 0;
+        }
+    }
+} else if (btn == HIGH && lastBtn == LOW) {
+    // Button RELEASED - check if it was a quick tap (fire) or hold (shield)
+    unsigned long holdTime = millis() - normalPushStartTime;
+    if (holdTime < 500) {
+        // Quick tap - FIRE!
+//        playSound("/sounds/Laser_Shoot.wav", false);
+playSound("/sounds/Laser_Shoot.wav", true);  // Interrupt music briefly
+        for (int i=0; i<MAX_BULLETS; i++) {
+            if (!bullets[i].active) {
+                bullets[i].active = true;
+                if (!vertical && !leftFacing) {
+                    bullets[i].x = carrotX+CARROT_SHIP_W+2;
+                    bullets[i].y = carrotY;
+                    bullets[i].vx = 8.0f;
+                    bullets[i].vy = 0;
+                } else if (vertical) {
+                    bullets[i].x = carrotX;
+                    bullets[i].y = carrotY-CARROT_SHIP_W-2;
+                    bullets[i].vx = 0;
+                    bullets[i].vy = -8.0f;
+                } else {
+                    bullets[i].x = carrotX-CARROT_SHIP_W-2;
+                    bullets[i].y = carrotY;
+                    bullets[i].vx = -8.0f;
+                    bullets[i].vy = 0;
+                }
+                break;
+            }
+        }
+    }
+}
+
+lastBtn = btn;
+
+// Update shield state
+if (shieldActive) {
+    if (millis() - shieldActivatedTime > SHIELD_DURATION) {
+        shieldActive = false;
+        shieldChargeStartTime = millis();
+    }
+} else if (!shieldAvailable) {
+    if (millis() - shieldChargeStartTime > SHIELD_CHARGE_TIME) {
+        shieldAvailable = true;
+    }
+}
+
+// Erase carrot at old position
+if (prevShieldActive) {
+    if (!vertical && !leftFacing) {
+        tft.fillRect(prevCarrotX - 35, prevCarrotY - 35, CARROT_SHIP_W + 70, 70, COLOR_BG);
+    } else if (vertical) {
+        tft.fillRect(prevCarrotX - 35, prevCarrotY - CARROT_SHIP_W - 35, 70, CARROT_SHIP_W + 70, COLOR_BG);
+    } else {
+        tft.fillRect(prevCarrotX - CARROT_SHIP_W - 35, prevCarrotY - 35, CARROT_SHIP_W + 70, 70, COLOR_BG);
+    }
+} else {
+    if (!vertical && !leftFacing) {
+        cg_drawVectorCarrot(tft, prevCarrotX, prevCarrotY, true);
+    } else if (vertical) {
+        cg_drawVectorCarrotVertical(tft, prevCarrotX, prevCarrotY, true);
+    } else {
+        cg_drawVectorCarrotLeft(tft, prevCarrotX, prevCarrotY, true);
+    }
+}
+
+// Input
+extern volatile int rotaryPos;
+static int lastRotary = rotaryPos;
+int diff = rotaryPos - lastRotary;
+lastRotary = rotaryPos;
+
+if (!vertical && !leftFacing) {
+    carrotY += diff * 4;
+    if (carrotY < CARROT_Y_MIN) carrotY = CARROT_Y_MIN;
+    if (carrotY > CARROT_Y_MAX) carrotY = CARROT_Y_MAX;
+} else if (vertical) {
+    carrotX += diff * 4;
+    int leftLimit = 80;
+    int rightLimit = SCREEN_W - 80;
+    if (carrotX < leftLimit) carrotX = leftLimit;
+    if (carrotX > rightLimit) carrotX = rightLimit;
+} else {
+    carrotY += diff * 4;
+    if (carrotY < CARROT_Y_MIN) carrotY = CARROT_Y_MIN;
+    if (carrotY > CARROT_Y_MAX) carrotY = CARROT_Y_MAX;
+}
+
+// Draw carrot
+if (!vertical && !leftFacing) {
+    cg_drawVectorCarrot(tft, carrotX, carrotY, false);
+} else if (vertical) {
+    cg_drawVectorCarrotVertical(tft, carrotX, carrotY, false);
+} else {
+    cg_drawVectorCarrotLeft(tft, carrotX, carrotY, false);
+}
+
+// Draw shield
+if (shieldActive) {
+    if (!vertical && !leftFacing) {
+        cg_drawShield(tft, carrotX, carrotY, false, false, false, false);
+    } else if (vertical) {
+        cg_drawShield(tft, carrotX, carrotY, true, false, false, false);
+    } else {
+        cg_drawShield(tft, carrotX, carrotY, false, false, false, true);
+    }
+}
+
+prevCarrotX = carrotX;
+prevCarrotY = carrotY;
+prevShieldActive = shieldActive;                    
                     // Update and draw bullets
                     for (int i=0; i<MAX_BULLETS; i++) {
                         if (!bullets[i].active) continue;
@@ -2274,24 +2365,37 @@ if (enemies[i].fireTimer >= fireDelay) {
                         lostLife = true;
                     }
                     
-                    for (int i=0; i<MAX_ENEMIES; i++) {
-                        if (!enemies[i].active) continue;
-                        int ex = (int)enemies[i].x, ey = (int)enemies[i].y;
-                        if (abs(carrotX+CARROT_SHIP_W/2-ex)<18 && abs(carrotY-ey)<18) {
-                            if (shieldActive) {
-                                if (enemies[i].type == 0) {
-                                    cg_drawBat(tft, ex, ey, true, batColor);
-                                } else {
-                                    bool onCeiling = (enemies[i].y < SCREEN_H/2);
-                                    cg_drawTroglobite(tft, ex, ey, true, onCeiling, trogColor);
-                                }
-                                enemies[i].active = false;
-                                score += 50;
-                            } else {
-                                lostLife = true;
-                            }
-                        }
-                    }
+for (int i=0; i<MAX_ENEMIES; i++) {
+    if (!enemies[i].active) continue;
+    int ex = (int)enemies[i].x, ey = (int)enemies[i].y;
+    
+    // Collision detection that works for all orientations
+    int hitRadius = 18;
+    bool collision = false;
+    
+    if (vertical) {
+        // Level 2: vertical ship
+        collision = (abs(carrotX - ex) < hitRadius && abs(carrotY - CARROT_SHIP_W/2 - ey) < hitRadius);
+    } else {
+        // Level 1 & 3: horizontal ships
+        collision = (abs(carrotX + CARROT_SHIP_W/2 - ex) < hitRadius && abs(carrotY - ey) < hitRadius);
+    }
+    
+    if (collision) {
+        if (shieldActive) {
+            if (enemies[i].type == 0) {
+                cg_drawBat(tft, ex, ey, true, batColor);
+            } else {
+                bool onCeiling = (enemies[i].y < SCREEN_H/2);
+                cg_drawTroglobite(tft, ex, ey, true, onCeiling, trogColor);
+            }
+            enemies[i].active = false;
+            score += 50;
+        } else {
+            lostLife = true;
+        }
+    }
+}
                     
                     for (int i=0; i<MAX_ENEMY_BULLETS; i++) {
                         if (!enemyBullets[i].active) continue;
@@ -2355,49 +2459,84 @@ if (enemies[i].fireTimer >= fireDelay) {
                     
 if (lostLife) {
     lives--;
+    
     if (lives <= 0) {
-        tft.fillScreen(COLOR_BG);
+        tft.fillScreen(TFT_BLACK);
+        delay(50);
         cg_drawGameOver(tft);
-        delay(2500);
+        playSound("/sounds/game_over.wav", false);
+        
+        // Keep audio playing during game over screen
+        unsigned long gameOverStart = millis();
+        while (millis() - gameOverStart < 2500) {
+            updateAudio();
+            delay(10);
+        }
+        
+        tft.fillScreen(TFT_BLACK);
+        delay(100);
         break;
     }
     
+    // Still have lives - play death sound and respawn
+    //playSound("/sounds/I_have_just_died.wav", false);
+    playSound("/sounds/I_have_just_died.wav", true);  // Interrupt music
+
+    // FORCE lives display update
+    tft.fillRect(SCREEN_W-100, 0, 100, 25, COLOR_BG);
+    for (int i=0; i<lives; i++)
+        cg_drawMiniCarrot(tft, SCREEN_W-20-16*i, 17, false);
+    
+    // Wait while playing death sound
+    unsigned long deathStart = millis();
+    while (millis() - deathStart < 500) {
+        updateAudio();
+        delay(10);
+    }
+    
     tft.fillScreen(COLOR_BG);
-    delay(650);
-                        
-// Respawn
-                        if (levelType == 1) {
-                            carrotX = 40;
-                            carrotY = SCREEN_H/2;
-                        } else if (levelType == 2) {
-                            carrotX = SCREEN_W/2;
-                            carrotY = SCREEN_H - 35;  // FIXED: Even closer to bottom
-                        } else {
-                            carrotX = SCREEN_W - 35;
-                            carrotY = SCREEN_H/2;
-                        }
-                        
-                        prevCarrotX = carrotX;
-                        prevCarrotY = carrotY;
-                        
-                        for (int i=0; i<MAX_BULLETS; i++) bullets[i].active = false;
-                        for (int i=0; i<MAX_ENEMIES; i++) enemies[i].active = false;
-                        for (int i=0; i<MAX_ENEMY_BULLETS; i++) enemyBullets[i].active = false;
-                        
-                        shieldActive = false;
-                        shieldAvailable = true;
-                        prevShieldActive = false;
-                        lastScore = -1;
-                        lastLives = -1;
-                        lastShieldAvailable = true;
-                        continue;
-                    }
+    
+    // Continue with more audio updates during respawn pause
+    deathStart = millis();
+    while (millis() - deathStart < 650) {
+        updateAudio();
+        delay(10);
+    }
+    
+    // Respawn
+    if (levelType == 1) {
+        carrotX = 40;
+        carrotY = SCREEN_H/2;
+    } else if (levelType == 2) {
+        carrotX = SCREEN_W/2;
+        carrotY = SCREEN_H - 35;
+    } else {
+        carrotX = SCREEN_W - 35;
+        carrotY = SCREEN_H/2;
+    }
+    
+    prevCarrotX = carrotX;
+    prevCarrotY = carrotY;
+    
+    for (int i=0; i<MAX_BULLETS; i++) bullets[i].active = false;
+    for (int i=0; i<MAX_ENEMIES; i++) enemies[i].active = false;
+    for (int i=0; i<MAX_ENEMY_BULLETS; i++) enemyBullets[i].active = false;
+    
+    shieldActive = false;
+    shieldAvailable = true;
+    prevShieldActive = false;
+    lastScore = -1;
+    lastLives = -1;  // This forces redraw on next frame
+    lastShieldAvailable = true;
+    continue;
+}
                     
                     delay(24);
                 }
-                
-                // Level complete (1 minute passed)
+
+// Level complete (1 minute passed)
                 if (lives > 0) {
+                    stopAudio();  // Stop music before next level
                     score += 1000;
                     currentGameLevel++;
                 }
@@ -2406,12 +2545,22 @@ if (lostLife) {
             if (lives <= 0) break;
         }
         
-// Game over - loop will restart and show splash screen
+
+        
+// End of level loop - loop back to splash screen
         if (lives <= 0) {
-            // Don't return - let the outer loop continue to show splash again
-            firstGame = true;  // Show cutscenes again on next playthrough
+            // Clear screen completely before looping back
+            tft.fillScreen(TFT_BLACK);
+            delay(100);
+            tft.fillScreen(TFT_BLACK);
+            delay(100);
+            
+            // Reset for next game
+            firstGame = false;  // Don't show cutscenes again
+            // Loop continues back to splash screen automatically
         }
     } // End of outer replay loop
 } // End of run_Captain_Gordo function
+
 
 #endif // CAPTAIN_GORDO_H

@@ -142,22 +142,21 @@ void run_StarWarsAscii(TFT_eSPI &tft) {
     char line[128];
     String frame_lines[24];
     
-    const int max_cols = 80;      // Source is 80 columns wide
-    const int display_cols = 53;  // We can show 53 columns (53*6=318 pixels)
-    const int col_offset = 7;     // Start at column 7 to show more left side
+    const int max_cols = 80;
+    const int display_cols = 53;
+    const int col_offset = 7;
     const int max_rows = 24;
 
     tft.fillScreen(TFT_BLACK);
-    tft.setTextFont(1); // 6x8 mono font
+    tft.setTextFont(1);
     int char_w = 6;
     int char_h = 8;
-    int total_w = char_w * display_cols;  // 318 pixels wide
-    int total_h = char_h * max_rows;      // 192 pixels tall
+    int total_w = char_w * display_cols;
+    int total_h = char_h * max_rows;
     
-    // Move image down
-    int x0 = (SCREEN_W - total_w) / 2;    // Horizontal center
-    int y0 = (SCREEN_H - total_h) / 2 + 20;  // Moved down by 20 pixels
-    if (y0 < 25) y0 = 25;  // Keep space for pause indicator
+    int x0 = (SCREEN_W - total_w) / 2;
+    int y0 = (SCREEN_H - total_h) / 2 + 20;
+    if (y0 < 25) y0 = 25;
 
     int frame_count = 0;
     bool exitRequested = false;
@@ -165,13 +164,35 @@ void run_StarWarsAscii(TFT_eSPI &tft) {
     int lastRotaryPos = rotaryPos;
     int lastPauseButton = HIGH;
     
+    // NEW: Exit button hold timing
+    unsigned long exitButtonPressTime = 0;
+    bool exitButtonHeld = false;
+    
     while (!exitRequested) {
-        // Check for exit button (KO button)
-        if (digitalRead(PIN_KO) == LOW) {
-            Serial.println("[StarWars] KO button pressed, exiting.");
-            exitRequested = true;
-            while (digitalRead(PIN_KO) == LOW) delay(10);
-            break;
+        // Check for exit button (KO button) - HOLD FOR 3 SECONDS
+        int exitButton = digitalRead(PIN_KO);
+        
+        if (exitButton == LOW) {
+            if (!exitButtonHeld) {
+                // Button just pressed
+                exitButtonPressTime = millis();
+                exitButtonHeld = true;
+                Serial.println("[StarWars] Exit button pressed - hold for 3 sec...");
+            } else {
+                // Button still held - check duration
+                unsigned long holdDuration = millis() - exitButtonPressTime;
+                if (holdDuration >= 3000) {
+                    Serial.println("[StarWars] Exit button held 3 sec - exiting!");
+                    exitRequested = true;
+                    break;
+                }
+            }
+        } else {
+            // Button released
+            if (exitButtonHeld) {
+                Serial.println("[StarWars] Exit button released (hold longer to exit)");
+            }
+            exitButtonHeld = false;
         }
 
         // Check for pause button (rotary push button)
@@ -181,7 +202,6 @@ void run_StarWarsAscii(TFT_eSPI &tft) {
             Serial.print("[StarWars] ");
             Serial.println(paused ? "PAUSED" : "RESUMED");
             
-            // Show pause indicator at top
             if (paused) {
                 tft.fillRect(SCREEN_W/2 - 30, 2, 60, 12, TFT_RED);
                 tft.setTextColor(TFT_WHITE, TFT_RED);
@@ -189,7 +209,6 @@ void run_StarWarsAscii(TFT_eSPI &tft) {
                 tft.setTextDatum(MC_DATUM);
                 tft.drawString("PAUSED", SCREEN_W/2, 8);
             } else {
-                // Clear pause indicator
                 tft.fillRect(SCREEN_W/2 - 30, 2, 60, 12, TFT_BLACK);
             }
             
@@ -197,12 +216,12 @@ void run_StarWarsAscii(TFT_eSPI &tft) {
         }
         lastPauseButton = pauseButton;
 
-        // Check rotary for fast forward/rewind - 10 frames per click
+        // Check rotary for fast forward/rewind
         int rotaryDiff = rotaryPos - lastRotaryPos;
         if (rotaryDiff != 0) {
             bool forward = (rotaryDiff > 0);
             int clicks = abs(rotaryDiff);
-            int framesToSkip = clicks * 10;  // 10 frames per click
+            int framesToSkip = clicks * 10;
             
             Serial.print("[StarWars] ");
             Serial.print(forward ? "FF " : "RW ");
@@ -211,7 +230,6 @@ void run_StarWarsAscii(TFT_eSPI &tft) {
             Serial.print(f.position());
             Serial.println(")");
             
-            // Show FF/RW indicator
             tft.fillRect(SCREEN_W/2 - 20, SCREEN_H - 12, 40, 10, forward ? TFT_GREEN : TFT_YELLOW);
             tft.setTextColor(TFT_BLACK, forward ? TFT_GREEN : TFT_YELLOW);
             tft.setTextFont(1);
@@ -222,7 +240,6 @@ void run_StarWarsAscii(TFT_eSPI &tft) {
                 if (forward) {
                     if (!skipFrameForward(f, line)) {
                         Serial.println("[StarWars] Can't skip forward - at end");
-                        // Loop back to beginning
                         f.seek(0);
                         frame_count = 0;
                         break;
@@ -238,27 +255,25 @@ void run_StarWarsAscii(TFT_eSPI &tft) {
             Serial.print("[StarWars] Now at position ");
             Serial.println(f.position());
             
-            // Clear FF/RW indicator after a moment
             delay(200);
             tft.fillRect(SCREEN_W/2 - 20, SCREEN_H - 12, 40, 10, TFT_BLACK);
             
             lastRotaryPos = rotaryPos;
         }
 
-        // If paused, don't advance frames
         if (paused) {
             delay(50);
             continue;
         }
 
         // --- Read frame delay ---
-        int frame_delay = 66; // default
+        int frame_delay = 66;
         while (f.available()) {
             int len = f.readBytesUntil('\n', line, sizeof(line)-1);
             line[len] = '\0';
             String s = String(line);
             s.trim();
-            if (s.length() == 0) continue; // skip blank
+            if (s.length() == 0) continue;
             
             bool just_number = true;
             for (size_t i = 0; i < s.length(); ++i) {
@@ -268,7 +283,7 @@ void run_StarWarsAscii(TFT_eSPI &tft) {
             if (just_number && s.length() > 0) {
                 int n = s.toInt();
                 frame_delay = n * 62;
-                if (frame_delay < 16) frame_delay = 16; // minimum delay
+                if (frame_delay < 16) frame_delay = 16;
                 break;
             }
         }
@@ -281,29 +296,26 @@ void run_StarWarsAscii(TFT_eSPI &tft) {
             String s = String(line);
             s.trim();
             
-            // Check for next frame's number (separator)
             bool just_number = true;
             for (size_t i = 0; i < s.length(); ++i) {
                 if (!isDigit(s[i])) { just_number = false; break; }
             }
             
             if (just_number && s.length() > 0) {
-                // Seek back so we read this number as the next frame's delay
-                int backseek = len + 1; // +1 for the newline
+                int backseek = len + 1;
                 f.seek(f.position() - backseek);
                 break;
             }
             
-            if (s.length() == 0) continue; // skip blank lines
+            if (s.length() == 0) continue;
             frame_lines[lines_in_frame++] = String(line);
         }
         
-        // Always fill all lines
         for (int i = lines_in_frame; i < max_rows; i++) {
             frame_lines[i] = "";
         }
 
-        // Draw full 24-row grid, always showing columns from col_offset
+        // Draw frame
         int y = y0;
         for (int row = 0; row < max_rows; row++) {
             String ln = frame_lines[row];
@@ -320,7 +332,6 @@ void run_StarWarsAscii(TFT_eSPI &tft) {
 
         delay(frame_delay);
 
-        // Loop movie
         if (!f.available()) {
             Serial.println("[StarWars] End of file, looping.");
             f.seek(0);
