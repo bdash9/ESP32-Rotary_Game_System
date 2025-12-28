@@ -31,6 +31,7 @@ void stopAudio();
 #include "Run_Gordo_Run.h"
 #include "Captain_Gordo.h"
 #include "Star_Wars_ascii.h"
+#include "Rhythm_Runner.h"  // ← ADD THIS
 
 TFT_eSPI tft = TFT_eSPI();
 
@@ -47,9 +48,27 @@ void run_Tempest_Gordo(TFT_eSPI &tft);
 void run_Run_Gordo_Run(TFT_eSPI &tft);
 void run_Captain_Gordo(TFT_eSPI &tft);
 void run_StarWarsAscii(TFT_eSPI &tft);
+void run_Rhythm_Runner(TFT_eSPI &tft);  // ← ADD THIS
 
-const char *game_titles[] = { "Tempest Gordo", "Run Gordo Run!", "Captain Gordo", "Star Wars: Ascii" };
-enum { TEMPEST_GORDO_INDEX = 0, RUN_GORDO_RUN_INDEX, CAPTAIN_GORDO_INDEX, STAR_WARS_ASCII_INDEX, NUM_GAMES };
+// ← MODIFY THIS ARRAY
+const char *game_titles[] = { 
+    "Tempest Gordo", 
+    "Run Gordo Run!", 
+    "Captain Gordo", 
+    "Star Wars: Ascii",
+    "Rhythm Runner"  // ← ADD THIS
+};
+
+// ← MODIFY THIS ENUM
+enum { 
+    TEMPEST_GORDO_INDEX = 0, 
+    RUN_GORDO_RUN_INDEX, 
+    CAPTAIN_GORDO_INDEX, 
+    STAR_WARS_ASCII_INDEX, 
+    RHYTHM_RUNNER_INDEX,  // ← ADD THIS
+    NUM_GAMES 
+};
+
 int selected_game = 0;
 int currentLevel = 1;
 
@@ -72,7 +91,6 @@ void stopAudio() {
     wav = nullptr;
     file = nullptr;
   }
-
 }
 
 void initAudio() {
@@ -125,7 +143,6 @@ void playSound(const char *path, bool stopCurrent) {
     delete file;
     wav = nullptr;
     file = nullptr;
-
   }
 }
 
@@ -462,6 +479,7 @@ void loop() {
       case RUN_GORDO_RUN_INDEX: run_Run_Gordo_Run(tft); break;
       case CAPTAIN_GORDO_INDEX: run_Captain_Gordo(tft); break;
       case STAR_WARS_ASCII_INDEX: run_StarWarsAscii(tft); break;
+      case RHYTHM_RUNNER_INDEX: run_Rhythm_Runner(tft); break;  // ← ADD THIS
     }
     
     tft.init();
