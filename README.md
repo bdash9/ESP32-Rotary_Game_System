@@ -79,3 +79,6 @@ SD (Shutdown)    	3.3v
 5V              		5V           
 GND              	GND                         
 4-BR Load           	4-8Ω Speaker                 
+
+ 
+In Rhythm Runner.... I am calling some Who wav files that I own. I did not post them as I don't have the rights to do so. You can replace them with your own mono, 1600Hz 16-bit wav files.
