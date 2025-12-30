@@ -31,7 +31,8 @@ void stopAudio();
 #include "Run_Gordo_Run.h"
 #include "Captain_Gordo.h"
 #include "Star_Wars_ascii.h"
-#include "Rhythm_Runner.h"  // ← ADD THIS
+#include "Rhythm_Runner.h"
+#include "Winter_Olympics.h"
 
 TFT_eSPI tft = TFT_eSPI();
 
@@ -48,7 +49,8 @@ void run_Tempest_Gordo(TFT_eSPI &tft);
 void run_Run_Gordo_Run(TFT_eSPI &tft);
 void run_Captain_Gordo(TFT_eSPI &tft);
 void run_StarWarsAscii(TFT_eSPI &tft);
-void run_Rhythm_Runner(TFT_eSPI &tft);  // ← ADD THIS
+void run_Rhythm_Runner(TFT_eSPI &tft);  
+void run_Winter_Olympics(TFT_eSPI &tft);
 
 // ← MODIFY THIS ARRAY
 const char *game_titles[] = { 
@@ -56,7 +58,8 @@ const char *game_titles[] = {
     "Run Gordo Run!", 
     "Captain Gordo", 
     "Star Wars: Ascii",
-    "Rhythm Runner"  // ← ADD THIS
+    "Rhythm Runner",
+    "Winter Olympics"
 };
 
 // ← MODIFY THIS ENUM
@@ -65,7 +68,8 @@ enum {
     RUN_GORDO_RUN_INDEX, 
     CAPTAIN_GORDO_INDEX, 
     STAR_WARS_ASCII_INDEX, 
-    RHYTHM_RUNNER_INDEX,  // ← ADD THIS
+    RHYTHM_RUNNER_INDEX,
+    WINTER_OLYMPICS_INDEX,
     NUM_GAMES 
 };
 
@@ -479,7 +483,8 @@ void loop() {
       case RUN_GORDO_RUN_INDEX: run_Run_Gordo_Run(tft); break;
       case CAPTAIN_GORDO_INDEX: run_Captain_Gordo(tft); break;
       case STAR_WARS_ASCII_INDEX: run_StarWarsAscii(tft); break;
-      case RHYTHM_RUNNER_INDEX: run_Rhythm_Runner(tft); break;  // ← ADD THIS
+      case RHYTHM_RUNNER_INDEX: run_Rhythm_Runner(tft); break;
+      case WINTER_OLYMPICS_INDEX: run_Winter_Olympics(tft); break; 
     }
     
     tft.init();
