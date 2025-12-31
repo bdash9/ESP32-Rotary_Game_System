@@ -187,66 +187,45 @@ void sj_drawMedal(TFT_eSPI &tft, int x, int y, int medalType) {
 
 //=============================================================================
 // ANGLE METER
-//=============================================================================
 void sj_drawAngleMeter(TFT_eSPI &tft, float angle) {
     int meterX = SCREEN_W - 30;
     int meterY = SCREEN_H / 2 - 60;
     int meterH = 120;
     int meterW = 15;
     
-    // Draw once - static background
-    static bool meterDrawn = false;
-    if (!meterDrawn) {
-        // Background bar
-        tft.fillRect(meterX, meterY, meterW, meterH, TFT_BLACK);
-        tft.drawRect(meterX, meterY, meterW, meterH, TFT_WHITE);
-        
-        // Color zones (bottom to top) - NOW WITH RED AT TOP
-        // Red zone (bottom) - too steep down
-        tft.fillRect(meterX + 2, meterY + meterH - 24, meterW - 4, 22, TFT_RED);
-        
-        // Yellow zone - slightly off
-        tft.fillRect(meterX + 2, meterY + meterH - 52, meterW - 4, 26, TFT_YELLOW);
-        
-        // Green zone (middle) - perfect angle around -0.35 (-20 degrees)
-        tft.fillRect(meterX + 2, meterY + meterH - 80, meterW - 4, 26, TFT_GREEN);
-        
-        // Yellow zone - slightly off
-        tft.fillRect(meterX + 2, meterY + meterH - 108, meterW - 4, 26, TFT_YELLOW);
-        
-        // Red zone (top) - too shallow/flat
-        tft.fillRect(meterX + 2, meterY + 2, meterW - 4, 22, TFT_RED);
-        
-        meterDrawn = true;
-    }
+    // Background bar
+    tft.fillRect(meterX, meterY, meterW, meterH, TFT_BLACK);
+    tft.drawRect(meterX, meterY, meterW, meterH, TFT_WHITE);
     
-    // Calculate indicator position
-    // Map angle range: -0.7 (steep) to 0.0 (flat)
-    // -0.7 = bottom, -0.35 = middle (green), 0.0 = top
-    float normalizedAngle = (angle + 0.7f) / 0.7f;  // 0 to 1
+    // Color zones (bottom to top)
+    tft.fillRect(meterX + 2, meterY + meterH - 24, meterW - 4, 22, TFT_RED);
+    tft.fillRect(meterX + 2, meterY + meterH - 52, meterW - 4, 26, TFT_YELLOW);
+    tft.fillRect(meterX + 2, meterY + meterH - 80, meterW - 4, 26, TFT_GREEN);
+    tft.fillRect(meterX + 2, meterY + meterH - 108, meterW - 4, 26, TFT_YELLOW);
+    tft.fillRect(meterX + 2, meterY + 2, meterW - 4, 22, TFT_RED);
+    
+    // Calculate and draw indicator
+    float normalizedAngle = (angle + 0.7f) / 0.7f;
     if (normalizedAngle < 0) normalizedAngle = 0;
     if (normalizedAngle > 1) normalizedAngle = 1;
     
     int indicatorY = meterY + meterH - (int)(normalizedAngle * meterH);
     
-    // Erase old indicator area (just the triangle area outside the meter)
-    static int lastIndicatorY = indicatorY;
-    tft.fillRect(meterX - 6, lastIndicatorY - 5, 6, 10, COLOR_SKY);
+    // Erase old indicator by filling area with sky color BEFORE drawing new one
+    tft.fillRect(meterX - 6, meterY - 5, 6, meterH + 10, COLOR_SKY);
     
     // Draw new indicator (white triangle)
     tft.fillTriangle(meterX - 5, indicatorY, 
                      meterX, indicatorY - 4,
                      meterX, indicatorY + 4, TFT_WHITE);
-    
-    lastIndicatorY = indicatorY;
 }
 
 int sj_getAngleQuality(float angle) {
     // Return 0=red, 1=yellow, 2=green
     float diff = abs(angle - (-0.35f));  // Difference from ideal
     
-    if (diff < 0.08f) return 2;  // Green - good angle
-    else if (diff < 0.2f) return 1;  // Yellow - okay
+    if (diff < 0.03f) return 2;  // Green - MUCH NARROWER (was 0.045f)
+    else if (diff < 0.12f) return 1;  // Yellow - also narrower (was 0.15f)
     else return 0;  // Red - bad
 }
 
@@ -553,15 +532,25 @@ void run_Ski_Jump(TFT_eSPI &tft) {
                 jumper.y = 180 - t * t * 40;
             }
             
-            if (jumper.x >= 280) {
+if (jumper.x >= 280) {
                 jumper.phase = PHASE_JUMPING;
                 jumper.velocityX = jumper.speed;
                 jumper.velocityY = -jumper.speed * 0.7f;
                 
-                if (btn == HIGH && lastBtn == LOW) {
-                    jumper.velocityY -= 2.0f;
+                // Score the jump timing - crouched at takeoff is BEST
+                float jumpBonus = 1.0f;
+                if (btn == LOW) {
+                    // Perfect! Still crouched at takeoff
+                    jumpBonus = 1.15f;  // 15% bonus
+                    jumper.velocityY -= 2.0f;  // Extra height
                     playSound("/sounds/beep_go.wav", false);
+                } else {
+                    // Standing up at takeoff - penalty
+                    jumpBonus = 0.9f;  // 10% penalty
                 }
+                
+                // Store jump quality for final calculation
+                jumper.angleScore = jumpBonus * 100;  // Start score with jump bonus
             }
             
             // Erase old position
@@ -605,28 +594,32 @@ void run_Ski_Jump(TFT_eSPI &tft) {
             prevX = jumper.x;
             prevY = jumper.y;
             
-        } else if (jumper.phase == PHASE_JUMPING || jumper.phase == PHASE_FLYING) {
+} else if (jumper.phase == PHASE_JUMPING || jumper.phase == PHASE_FLYING) {
             jumper.phase = PHASE_FLYING;
             
-            // Player controls angle with rotary knob
+            // Player controls angle with rotary knob - MORE SENSITIVE NOW
             static int lastRotaryFlying = rotaryPos;
             int rotDiff = rotaryPos - lastRotaryFlying;
             
             if (rotDiff > 0) {
-                jumperAngle -= 0.02f;  // Tip nose up more
+                jumperAngle -= 0.03f;  // MORE SENSITIVE (was 0.02f)
                 if (jumperAngle < -0.7f) jumperAngle = -0.7f;
                 lastRotaryFlying = rotaryPos;
             } else if (rotDiff < 0) {
-                jumperAngle += 0.02f;  // Tip nose down more
+                jumperAngle += 0.03f;  // MORE SENSITIVE (was 0.02f)
                 if (jumperAngle > 0.0f) jumperAngle = 0.0f;
                 lastRotaryFlying = rotaryPos;
             }
             
-            // Track angle quality
+// Add wind drift - angle slowly drifts requiring constant adjustment
+            jumperAngle += 0.008f;  // MUCH FASTER drift (was 0.0055f)
+            if (jumperAngle > 0.0f) jumperAngle = 0.0f;
+            
+// Track angle quality - STRICTER SCORING
             int quality = sj_getAngleQuality(jumperAngle);
-            if (quality == 2) jumper.angleScore += 3;  // Green
-            else if (quality == 1) jumper.angleScore += 1;  // Yellow
-            // Red adds nothing
+            if (quality == 2) jumper.angleScore += 5;  // Green: 5 points
+            else if (quality == 1) jumper.angleScore += 1;  // Yellow: 1 point
+            // Red: 0 points (nothing)
             jumper.angleFrames++;
             
             jumper.velocityY += 0.2f;
@@ -635,20 +628,16 @@ void run_Ski_Jump(TFT_eSPI &tft) {
             
             jumper.distance = jumper.x - 280;
             
-            // Angle affects distance - good angle = more distance
+// Angle affects distance - BRUTAL PENALTIES
             float angleBonus = 1.0f;
-            if (quality == 2) angleBonus = 1.2f;  // 20% bonus
-            else if (quality == 1) angleBonus = 1.0f;  // Normal
-            else angleBonus = 0.8f;  // 20% penalty
+            if (quality == 2) angleBonus = 1.03f;  // Green: only 3% bonus (was 5%)
+            else if (quality == 1) angleBonus = 0.75f;  // Yellow: 25% penalty! (was 15%)
+            else angleBonus = 0.5f;  // Red: 50% penalty!! (was 40%)
             
             jumper.distance *= angleBonus;
             
-            // Flying view - only redraw when needed
-            static bool flyingScreenDrawn = false;
-            if (!flyingScreenDrawn) {
-                tft.fillScreen(COLOR_SKY);
-                flyingScreenDrawn = true;
-            }
+// Flying view - redraw sky to clear clouds
+            tft.fillScreen(COLOR_SKY);
             
             cloudScroll += jumper.velocityX * 3;
             sj_drawClouds(tft, cloudScroll);
@@ -683,8 +672,8 @@ void run_Ski_Jump(TFT_eSPI &tft) {
             tft.drawLine(armX, armY, armX - 8, armY - 10, TFT_RED);
             tft.drawLine(armX, armY + 3, armX - 8, armY - 7, TFT_RED);
             
-            // Draw angle meter
-            sj_drawAngleMeter(tft, jumperAngle);
+// Draw angle meter
+sj_drawAngleMeter(tft, jumperAngle);
             
             // Distance - only update when changed significantly
             static float lastDisplayedDist = -1;
@@ -701,16 +690,15 @@ void run_Ski_Jump(TFT_eSPI &tft) {
             
             sj_drawMiniOlympicRings(tft, 15, SCREEN_H - 30);
             
-            if (jumper.y > SCREEN_H / 2 + 50) {
+if (jumper.y > SCREEN_H / 2 + 50) {
                 jumper.phase = PHASE_LANDING;
                 jumper.landMarkX = jumper.distance;
                 
-                // Calculate final distance based on angle maintenance
+// Calculate final distance based on angle maintenance - BRUTAL
                 float avgAngleQuality = jumper.angleScore / (float)jumper.angleFrames;
-                jumper.distance = jumper.distance * (0.7f + avgAngleQuality * 0.1f);
+                jumper.distance = jumper.distance * (0.4f + avgAngleQuality * 0.06f);  // Was 0.5f + 0.08f
                 
                 playSound("/sounds/beep.wav", false);
-                flyingScreenDrawn = false;  // Reset for next time
             }
             
         } else if (jumper.phase == PHASE_LANDING) {
@@ -837,11 +825,11 @@ void run_Ski_Jump(TFT_eSPI &tft) {
     tft.setTextFont(2);
     tft.drawString(distBuf, SCREEN_W/2, 90);
     
-    // Medal thresholds - MUCH HARDER NOW
+// Medal thresholds - VERY HARD
     int medal = 0;
-    if (jumper.distance >= 145) medal = 3;       // Gold: 145m+ (was 120m)
-    else if (jumper.distance >= 125) medal = 2;  // Silver: 125m+ (was 100m)
-    else if (jumper.distance >= 105) medal = 1;  // Bronze: 105m+ (was 80m)
+    if (jumper.distance >= 155) medal = 3;       // Gold: 155m+ (was 145m)
+    else if (jumper.distance >= 130) medal = 2;  // Silver: 130m+ (was 125m)
+    else if (jumper.distance >= 110) medal = 1;  // Bronze: 110m+ (was 105m)
     
     if (medal > 0) {
         sj_drawMedal(tft, SCREEN_W/2, 150, medal);
