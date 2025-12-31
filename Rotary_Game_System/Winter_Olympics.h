@@ -3,10 +3,13 @@
 
 #include <Arduino.h>
 #include <TFT_eSPI.h>
+#include "AudioOutputI2S.h" 
+#include "Ski_Jump.h"
 
 extern void playSound(const char *path, bool stopCurrent);
 extern void updateAudio();
 extern volatile int rotaryPos;
+extern AudioOutputI2S *out;
 
 #define SCREEN_W 320
 #define SCREEN_H 240
@@ -202,6 +205,9 @@ void wo_showSplashScreen(TFT_eSPI &tft) {
     tft.fillScreen(COLOR_SKY);
     
     // Start Olympics theme music
+        // Start Olympics theme music at HIGHER VOLUME
+    extern AudioOutputI2S *out;  // Access the global audio output
+    if (out) out->SetGain(1.0);  // Increase from 0.5 to 0.8
     playSound("/sounds/Olympics_Basic_Theme_and_Fanfare.wav", true);
     
     // "WINTER OLYMPICS" title
@@ -262,25 +268,40 @@ int wo_showGameMenu(TFT_eSPI &tft) {
     tft.fillScreen(TFT_BLACK);
     
     // Title - draw with Olympic colors (NO BLACK), one letter at a time
-    const char* title = "SELECT GAME";
+    const char* selectText = "SELECT";
+    const char* gameText = "GAME";
     int scale = 3;
     int spacing = 10 * scale;
     
-    // Center the entire title
-    int titleWidth = strlen(title) * spacing;
-    int startX = (SCREEN_W - titleWidth) / 2;
+    // Calculate widths
+    int selectWidth = strlen(selectText) * spacing;
+    int gameWidth = strlen(gameText) * spacing;
+    int gap = 15;
+    int totalWidth = selectWidth + gap + gameWidth;
+    
+    // Position SELECT with extra offset to the right
+    int selectX = (SCREEN_W - totalWidth) / 2 + 10;  // Added +20 to move SELECT right
+    int gameX = selectX + selectWidth + gap;
     
     // Olympic ring colors array (without black)
     uint16_t olympicColors[4] = {OLYMPIC_BLUE, OLYMPIC_YELLOW, OLYMPIC_GREEN, OLYMPIC_RED};
     
-    int cx = startX;
+    // Draw SELECT
+    int cx = selectX;
     int colorIndex = 0;
-    for (int i = 0; title[i]; i++) {
-        if (title[i] != ' ') {
-            wo_drawVecLetter(tft, title[i], cx, 15, scale, olympicColors[colorIndex % 4]);
-            wo_drawVecLetter(tft, title[i], cx + 1, 15, scale, olympicColors[colorIndex % 4]);  // Bold
-            colorIndex++;
-        }
+    for (int i = 0; selectText[i]; i++) {
+        wo_drawVecLetter(tft, selectText[i], cx, 15, scale, olympicColors[colorIndex % 4]);
+        wo_drawVecLetter(tft, selectText[i], cx + 1, 15, scale, olympicColors[colorIndex % 4]);
+        colorIndex++;
+        cx += spacing;
+    }
+    
+    // Draw GAME
+    cx = gameX;
+    for (int i = 0; gameText[i]; i++) {
+        wo_drawVecLetter(tft, gameText[i], cx, 15, scale, olympicColors[colorIndex % 4]);
+        wo_drawVecLetter(tft, gameText[i], cx + 1, 15, scale, olympicColors[colorIndex % 4]);
+        colorIndex++;
         cx += spacing;
     }
     
@@ -342,9 +363,13 @@ int wo_showGameMenu(TFT_eSPI &tft) {
 //=============================================================================
 // SKIING GAME - PERSPECTIVE & RENDERING
 //=============================================================================
+
+// HORIZON CONSTANT - use this everywhere for consistency
+#define SKI_HORIZON_Y 45
+
 void ski_initLanes() {
     int vanishX = SCREEN_W / 2;
-    int vanishY = 20;
+    int vanishY = SKI_HORIZON_Y;  // Use constant
     int bottomY = SCREEN_H - 30;
     int bottomSpacing = 35;
     
@@ -356,9 +381,24 @@ void ski_initLanes() {
     }
 }
 
-void ski_getLanePosition(int lane, float z, int &x, int &y) {
-    x = wo_skiLanes[lane].topX + (wo_skiLanes[lane].bottomX - wo_skiLanes[lane].topX) * (1.0f - z);
-    y = wo_skiLanes[lane].topY + (wo_skiLanes[lane].bottomY - wo_skiLanes[lane].topY) * (1.0f - z);
+void ski_drawMountainPeaks(TFT_eSPI &tft) {
+    // Draw mountain peaks along horizon
+    int peakY = SKI_HORIZON_Y;
+    int numPeaks = 8;
+    int peakSpacing = SCREEN_W / numPeaks;
+    
+    for (int i = 0; i < numPeaks; i++) {
+        int peakX = i * peakSpacing + peakSpacing / 2;
+        int peakHeight = random(15, 30);  // Random peak heights
+        int peakWidth = peakSpacing / 2;
+        
+        // Draw rounded peak (triangle with rounded top)
+        uint16_t snowPeak = tft.color565(255, 255, 255);
+        tft.fillTriangle(peakX - peakWidth, peakY, 
+                        peakX, peakY - peakHeight, 
+                        peakX + peakWidth, peakY, 
+                        snowPeak);
+    }
 }
 
 void ski_drawPineTree(TFT_eSPI &tft, int x, int y, int size) {
@@ -393,8 +433,11 @@ void ski_drawMountainOnce(TFT_eSPI &tft) {
     // Sky gradient (draw once at start)
     tft.fillScreen(COLOR_SKY);
     
-    // Draw snow surface with perspective
-    int horizonY = 20;
+    // Draw mountain peaks first
+    ski_drawMountainPeaks(tft);
+    
+    // Draw snow surface with perspective - LOWERED horizon
+    int horizonY = SKI_HORIZON_Y;
     for (int y = horizonY; y < SCREEN_H; y++) {
         float t = (float)(y - horizonY) / (SCREEN_H - horizonY);
         uint16_t snowShade = tft.color565(255, 255, 255 - (int)(t * 40));
@@ -405,12 +448,18 @@ void ski_drawMountainOnce(TFT_eSPI &tft) {
     for (int i = 0; i < 6; i++) {
         float z = 0.3f + (i * 0.12f);
         int treeX = (i % 2 == 0) ? 20 : SCREEN_W - 20;
-        int treeY = 20 + (SCREEN_H - 50) * (1.0f - z);
-        int treeSize = (int)(40 * (1.0f - z * 0.7f));  // Changed from 25 to 40
+        int treeY = SKI_HORIZON_Y + (SCREEN_H - 50) * (1.0f - z);
+        int treeSize = (int)(40 * (1.0f - z * 0.7f));
         
         ski_drawPineTree(tft, treeX, treeY, treeSize);
     }
 }
+
+void ski_getLanePosition(int lane, float z, int &x, int &y) {
+    x = wo_skiLanes[lane].topX + (wo_skiLanes[lane].bottomX - wo_skiLanes[lane].topX) * (1.0f - z);
+    y = wo_skiLanes[lane].topY + (wo_skiLanes[lane].bottomY - wo_skiLanes[lane].topY) * (1.0f - z);
+}
+
 
 void ski_drawGate(TFT_eSPI &tft, int lane, float z, bool isRed, bool erase = false) {
     int x, y;
@@ -420,16 +469,6 @@ void ski_drawGate(TFT_eSPI &tft, int lane, float z, bool isRed, bool erase = fal
     int poleWidth = max(2, (int)(4 * (1.0f - z * 0.7f)));
     int gateWidth = max(15, (int)(25 * (1.0f - z * 0.7f)));
     
-    if (erase) {
-        // Calculate snow color at this Y position
-        int horizonY = 20;
-        float t = (float)(y - horizonY) / (SCREEN_H - horizonY);
-        uint16_t snowShade = tft.color565(255, 255, 255 - (int)(t * 40));
-        
-        // Erase with appropriate snow shade
-        tft.fillRect(x - gateWidth - 5, y - poleHeight - 5, gateWidth * 2 + 10, poleHeight + 10, snowShade);
-        return;
-    }
     
     uint16_t color = isRed ? COLOR_GATE_RED : COLOR_GATE_BLUE;
     
@@ -452,14 +491,6 @@ void ski_drawSkier(TFT_eSPI &tft, int lane, bool erase = false) {
     int x, y;
     ski_getLanePosition(lane, 0.05f, x, y);
     
-    if (erase) {
-        // Calculate snow color at this Y position
-        int horizonY = 20;
-        float t = (float)(y - horizonY) / (SCREEN_H - horizonY);
-        uint16_t snowShade = tft.color565(255, 255, 255 - (int)(t * 40));
-        tft.fillRect(x - 15, y - 20, 30, 40, snowShade);
-        return;
-    }
     
     // Skier body (colorful outfit)
     uint16_t jacketColor = TFT_RED;
@@ -491,16 +522,6 @@ void ski_drawFinishLine(TFT_eSPI &tft, float z, bool erase = false) {
     int lineY = y - (int)(30 * (1.0f - z * 0.7f));
     int lineHeight = max(4, (int)(8 * (1.0f - z * 0.5f)));
     
-    if (erase) {
-        // Calculate snow color at this Y position
-        int horizonY = 20;
-        float t = (float)(lineY - horizonY) / (SCREEN_H - horizonY);
-        uint16_t snowShade = tft.color565(255, 255, 255 - (int)(t * 40));
-        
-        // Erase entire finish line area including spectators
-        tft.fillRect(x - width/2 - 10, lineY - 30, width + 20, 60, snowShade);
-        return;
-    }
     
     // Checkered pattern
     int squareSize = max(4, (int)(8 * (1.0f - z * 0.5f)));
@@ -598,18 +619,116 @@ bool ski_checkGatePass(int playerLane) {
         if (wo_gates[i].z < 0.1f && wo_gates[i].z > -0.05f) {
             wo_gates[i].passed = true;
             
-            // Check if player is in correct lane
-            if (abs(playerLane - wo_gates[i].lane) <= 1) {  // Allow 1 lane tolerance
+            // Check if player is in correct lane - MUST BE EXACT
+            if (playerLane == wo_gates[i].lane) {  // Changed from <= 1 to exact match
                 wo_skiScore += 100;
                 scoredPoint = true;
             } else {
-                // Missed gate - small penalty
-                wo_skiScore = max(0, wo_skiScore - 20);
+                // Missed gate - bigger penalty
+                wo_skiScore = max(0, wo_skiScore - 50);  // Increased penalty from 20 to 50
             }
         }
     }
     
     return scoredPoint;
+}
+
+// Medal drawing functions
+void wo_drawMedal(TFT_eSPI &tft, int x, int y, int medalType) {
+    // medalType: 0=none, 1=bronze, 2=silver, 3=gold
+    
+    if (medalType == 0) return;
+    
+    uint16_t medalColor;
+    const char* medalText;
+    
+    switch(medalType) {
+        case 3: // Gold
+            medalColor = 0xFEA0;  // Gold color
+            medalText = "GOLD";
+            break;
+        case 2: // Silver
+            medalColor = 0xC618;  // Silver color
+            medalText = "SILVER";
+            break;
+        case 1: // Bronze
+            medalColor = 0xA285;  // Bronze color
+            medalText = "BRONZE";
+            break;
+        default:
+            return;
+    }
+    
+    // Draw medal circle
+    tft.fillCircle(x, y, 25, medalColor);
+    tft.drawCircle(x, y, 25, TFT_BLACK);
+    tft.drawCircle(x, y, 24, TFT_BLACK);
+    tft.drawCircle(x, y, 26, TFT_BLACK);
+    
+    // Draw inner circle detail
+    tft.drawCircle(x, y, 18, TFT_BLACK);
+    
+    // Draw "1", "2", or "3" in center
+    tft.setTextColor(TFT_BLACK, medalColor);
+    tft.setTextFont(4);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString(String(4 - medalType), x, y);  // 3=1st, 2=2nd, 1=3rd
+    
+    // Draw ribbon/strap
+    tft.fillRect(x - 3, y - 25, 6, 15, TFT_RED);
+    tft.fillRect(x - 6, y - 35, 5, 15, TFT_RED);
+    tft.fillRect(x + 1, y - 35, 5, 15, TFT_RED);
+    
+    // Draw medal text below
+    tft.setTextColor(medalColor, TFT_BLACK);
+    tft.setTextFont(2);
+    tft.setTextDatum(TC_DATUM);
+    tft.drawString(medalText, x, y + 32);
+}
+
+int wo_calculateMedal(int score, unsigned long timeMs) {
+    // Medal calculation based on performance
+    // Max possible score: 1500 (15 gates × 100 points)
+    // Time component: compare against target time
+    
+    int gatePoints = score;  // Points from gates
+    
+    // Time scoring: Target time is 30 seconds for gold pace
+    // Faster = bonus, slower = penalty
+    float timeSec = timeMs / 1000.0f;
+    int timePoints = 0;
+    
+    if (timeSec < 25.0f) {
+        timePoints = 500;  // Excellent time
+    } else if (timeSec < 30.0f) {
+        timePoints = 400;  // Very good time
+    } else if (timeSec < 35.0f) {
+        timePoints = 300;  // Good time
+    } else if (timeSec < 40.0f) {
+        timePoints = 200;  // Average time
+    } else if (timeSec < 50.0f) {
+        timePoints = 100;  // Slow time
+    } else {
+        timePoints = 50;   // Very slow
+    }
+    
+    // Total performance score out of 2000
+    int totalScore = gatePoints + timePoints;
+    
+    // Medal thresholds (achievable but challenging)
+    // Gold: 1600+ (need good gates AND good time)
+    // Silver: 1300+ (decent performance)
+    // Bronze: 1000+ (completed the course)
+    
+    if (totalScore >= 1600) {
+        return 3;  // Gold
+    } else if (totalScore >= 1300) {
+        return 2;  // Silver
+    } else if (totalScore >= 1000) {
+        return 1;  // Bronze
+    } else {
+        return 0;  // No medal
+    }
 }
 
 void ski_runDownhillSkiing(TFT_eSPI &tft) {
@@ -712,13 +831,22 @@ void ski_runDownhillSkiing(TFT_eSPI &tft) {
         // Update course position (simulate skiing downhill)
         courseZ += wo_skiSpeed * deltaTime;
         
-        // Erase and update gate positions
+// Erase and update gate positions
         for (int i = 0; i < MAX_GATES; i++) {
             if (wo_gates[i].active) {
-                // Erase at old position
+                // Erase at old position by redrawing background
                 if (prevGateZ[i] > 0.0f && prevGateZ[i] <= 1.0f) {
-                    bool isRed = (i % 2 == 0);
-                    ski_drawGate(tft, wo_gates[i].lane, prevGateZ[i], isRed, true);
+                    int oldX, oldY;
+                    ski_getLanePosition(wo_gates[i].lane, prevGateZ[i], oldX, oldY);
+                    
+                    // Redraw snow gradient in gate area
+                    int eraseWidth = 60;
+                    int eraseHeight = 40;
+                    for (int ey = max(SKI_HORIZON_Y, oldY - eraseHeight); ey < min(SCREEN_H, oldY + 10); ey++) {
+                        float t = (float)(ey - SKI_HORIZON_Y) / (SCREEN_H - SKI_HORIZON_Y);
+                        uint16_t snowShade = tft.color565(255, 255, 255 - (int)(t * 40));
+                        tft.drawFastHLine(oldX - eraseWidth, ey, eraseWidth * 2, snowShade);
+                    }
                 }
                 
                 // Update position
@@ -738,9 +866,19 @@ void ski_runDownhillSkiing(TFT_eSPI &tft) {
         // Calculate finish line position (1.0 units after last gate) - MOVED UP HERE
         float finishZ = wo_gates[MAX_GATES - 1].z - 1.0f;
         
-        // Erase previous finish line if it moved
+// Erase previous finish line if it moved
         if (prevFinishZ > 0.0f && prevFinishZ <= 1.0f && abs(finishZ - prevFinishZ) > 0.01f) {
-            ski_drawFinishLine(tft, prevFinishZ, true);
+            int oldX, oldY;
+            ski_getLanePosition(2, prevFinishZ, oldX, oldY);
+            int width = (int)(SCREEN_W * 0.6f * (1.0f - prevFinishZ * 0.5f));
+            int lineY = oldY - (int)(30 * (1.0f - prevFinishZ * 0.7f));
+            
+            // Redraw snow gradient in finish line area
+            for (int ey = max(SKI_HORIZON_Y, lineY - 30); ey < min(SCREEN_H, lineY + 60); ey++) {
+                float t = (float)(ey - SKI_HORIZON_Y) / (SCREEN_H - SKI_HORIZON_Y);
+                uint16_t snowShade = tft.color565(255, 255, 255 - (int)(t * 40));
+                tft.drawFastHLine(max(0, oldX - width/2 - 10), ey, min(SCREEN_W, width + 20), snowShade);
+            }
         }
         prevFinishZ = finishZ;
         
@@ -775,8 +913,19 @@ void ski_runDownhillSkiing(TFT_eSPI &tft) {
         }
         
         // Erase skier at previous position if lane changed
+
+        
+// Erase skier at previous position if lane changed
         if (prevSkierLane != wo_playerLane) {
-            ski_drawSkier(tft, prevSkierLane, true);
+            int oldX, oldY;
+            ski_getLanePosition(prevSkierLane, 0.05f, oldX, oldY);
+            
+            // Redraw snow gradient in skier area
+            for (int ey = max(SKI_HORIZON_Y, oldY - 20); ey < min(SCREEN_H, oldY + 20); ey++) {
+                float t = (float)(ey - SKI_HORIZON_Y) / (SCREEN_H - SKI_HORIZON_Y);
+                uint16_t snowShade = tft.color565(255, 255, 255 - (int)(t * 40));
+                tft.drawFastHLine(oldX - 15, ey, 30, snowShade);
+            }
         }
         
         // Draw skier at current position
@@ -797,27 +946,40 @@ void ski_runDownhillSkiing(TFT_eSPI &tft) {
         delay(30);  // ~33 FPS
     }
     
-    // Calculate final time
+// Calculate final time
     unsigned long finalTime = millis() - wo_startTime;
     int seconds = finalTime / 1000;
     int hundredths = (finalTime % 1000) / 10;
+    
+    // Calculate medal
+    int medal = wo_calculateMedal(wo_skiScore, finalTime);
     
     // Game over screen
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor(TFT_YELLOW, TFT_BLACK);
     tft.setTextFont(4);
     tft.setTextDatum(MC_DATUM);
-    tft.drawString("FINISH!", SCREEN_W/2, SCREEN_H/2 - 50);
+    tft.drawString("FINISH!", SCREEN_W/2, SCREEN_H/2 - 80);
     
     char timeBuf[32];
     snprintf(timeBuf, sizeof(timeBuf), "Time: %d.%02d sec", seconds, hundredths);
     tft.setTextFont(2);
-    tft.drawString(timeBuf, SCREEN_W/2, SCREEN_H/2 - 10);
+    tft.drawString(timeBuf, SCREEN_W/2, SCREEN_H/2 - 40);
     
     char scoreBuf[32];
     snprintf(scoreBuf, sizeof(scoreBuf), "Score: %d", wo_skiScore);
-    tft.drawString(scoreBuf, SCREEN_W/2, SCREEN_H/2 + 20);
+    tft.drawString(scoreBuf, SCREEN_W/2, SCREEN_H/2 - 20);
     
+    // Draw medal
+    if (medal > 0) {
+        wo_drawMedal(tft, SCREEN_W/2, SCREEN_H/2 + 30, medal);
+    } else {
+        tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+        tft.setTextFont(2);
+        tft.drawString("No Medal", SCREEN_W/2, SCREEN_H/2 + 30);
+    }
+    
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.setTextFont(2);
     tft.drawString("Press button to continue", SCREEN_W/2, SCREEN_H - 30);
     
@@ -833,22 +995,11 @@ void ski_runDownhillSkiing(TFT_eSPI &tft) {
 //=============================================================================
 // SKI JUMP - PLACEHOLDER
 //=============================================================================
+//=============================================================================
+// SKI JUMP
+//=============================================================================
 void ski_runSkiJump(TFT_eSPI &tft) {
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.setTextFont(4);
-    tft.setTextDatum(MC_DATUM);
-    tft.drawString("SKI JUMP", SCREEN_W/2, SCREEN_H/2 - 30);
-    tft.setTextFont(2);
-    tft.drawString("Coming Soon!", SCREEN_W/2, SCREEN_H/2 + 10);
-    tft.drawString("Press button to return", SCREEN_W/2, SCREEN_H - 30);
-    
-    while (digitalRead(PIN_KO) == HIGH) {
-        updateAudio();
-        delay(50);
-    }
-    while (digitalRead(PIN_KO) == LOW) delay(10);
-    delay(400);
+    run_Ski_Jump(tft);
 }
 
 //=============================================================================
@@ -890,6 +1041,8 @@ void run_Winter_Olympics(TFT_eSPI &tft) {
         
         // Stop music before starting game
         stopAudio();
+        if (out) out->SetGain(0.5);  // Reset to normal volume for game sounds
+
         
         // Run selected game
         switch (selectedGame) {
@@ -907,6 +1060,7 @@ void run_Winter_Olympics(TFT_eSPI &tft) {
         }
         
         // After game ends, restart Olympics theme for menu
+        if (out) out->SetGain(0.8);  // Higher volume for menu music
         playSound("/sounds/Olympics_Basic_Theme_and_Fanfare.wav", true);
         
         tft.init();
