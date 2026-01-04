@@ -773,7 +773,7 @@ if (jumper.y > SCREEN_H / 2 + 50) {
                 delay(40);
             }
             
-            // Final landing - erase flying position
+// Final landing - erase flying position
             for (int ey = SCREEN_H - 85; ey < SCREEN_H - 45; ey++) {
                 if (ey >= JUMP_HORIZON_Y) {
                     float st = (float)(ey - JUMP_HORIZON_Y) / (SCREEN_H - JUMP_HORIZON_Y);
@@ -783,6 +783,9 @@ if (jumper.y > SCREEN_H / 2 + 50) {
             }
             
             sj_drawJumper(tft, landX, SCREEN_H - 60, false, false);
+            
+            // PLAY CROWD CHEER when landing!
+            playSound("/sounds/crowd-cheer-and-applause.wav", true);
             
             delay(500);
             

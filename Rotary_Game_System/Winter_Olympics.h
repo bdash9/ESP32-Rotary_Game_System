@@ -5,6 +5,8 @@
 #include <TFT_eSPI.h>
 #include "AudioOutputI2S.h" 
 #include "Ski_Jump.h"
+#include "Luge.h"  
+#include "Curling.h" 
 
 extern void playSound(const char *path, bool stopCurrent);
 extern void updateAudio();
@@ -50,16 +52,18 @@ enum WO_GameMode {
     WO_GAME_MENU,
     WO_GAME_SKIING,
     WO_GAME_SKI_JUMP,
-    WO_GAME_LUGE
+    WO_GAME_LUGE,
+    WO_GAME_CURLING  
 };
 
 // Menu items
 const char* wo_gameMenuTitles[] = {
     "Downhill Skiing",
     "Ski Jump",
-    "Luge"
+    "Luge",
+    "Curling"
 };
-const int WO_NUM_OLYMPIC_GAMES = 3;
+const int WO_NUM_OLYMPIC_GAMES = 4;
 
 // Gate structure
 struct WO_Gate {
@@ -280,7 +284,7 @@ int wo_showGameMenu(TFT_eSPI &tft) {
     int totalWidth = selectWidth + gap + gameWidth;
     
     // Position SELECT with extra offset to the right
-    int selectX = (SCREEN_W - totalWidth) / 2 + 10;  // Added +20 to move SELECT right
+    int selectX = (SCREEN_W - totalWidth) / 2 + 10;
     int gameX = selectX + selectWidth + gap;
     
     // Olympic ring colors array (without black)
@@ -315,21 +319,21 @@ int wo_showGameMenu(TFT_eSPI &tft) {
             // Clear menu area
             tft.fillRect(0, 70, SCREEN_W, SCREEN_H - 70, TFT_BLACK);
             
-            // Draw menu items with LARGER font
+            // Draw menu items with adjusted spacing for 4 items
             for (int i = 0; i < WO_NUM_OLYMPIC_GAMES; i++) {
-                int yPos = 85 + i * 50;
+                int yPos = 75 + i * 40;  // CHANGED: from 85 + i * 50 to 75 + i * 40
                 
                 if (i == selectedIndex) {
-                    tft.fillRoundRect(20, yPos - 8, SCREEN_W - 40, 40, 8, TFT_WHITE);
+                    tft.fillRoundRect(20, yPos - 6, SCREEN_W - 40, 36, 8, TFT_WHITE);  // CHANGED: height from 40 to 36
                     tft.setTextColor(TFT_BLUE, TFT_WHITE);
                 } else {
-                    tft.fillRoundRect(20, yPos - 8, SCREEN_W - 40, 40, 8, TFT_DARKGREY);
+                    tft.fillRoundRect(20, yPos - 6, SCREEN_W - 40, 36, 8, TFT_DARKGREY);  // CHANGED: height from 40 to 36
                     tft.setTextColor(TFT_WHITE, TFT_DARKGREY);
                 }
                 
-                tft.setTextFont(4);  // Changed from 2 to 4 for larger font
+                tft.setTextFont(4);
                 tft.setTextDatum(MC_DATUM);
-                tft.drawString(wo_gameMenuTitles[i], SCREEN_W/2, yPos + 12);
+                tft.drawString(wo_gameMenuTitles[i], SCREEN_W/2, yPos + 10);  // CHANGED: from yPos + 12 to yPos + 10
             }
             
             lastSelectedIndex = selectedIndex;
@@ -955,6 +959,8 @@ void ski_runDownhillSkiing(TFT_eSPI &tft) {
     int medal = wo_calculateMedal(wo_skiScore, finalTime);
     
     // Game over screen
+    // PLAY CROWD CHEER when landing!
+    playSound("/sounds/crowd-cheer-and-applause.wav", true);
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor(TFT_YELLOW, TFT_BLACK);
     tft.setTextFont(4);
@@ -993,9 +999,6 @@ void ski_runDownhillSkiing(TFT_eSPI &tft) {
 }
 
 //=============================================================================
-// SKI JUMP - PLACEHOLDER
-//=============================================================================
-//=============================================================================
 // SKI JUMP
 //=============================================================================
 void ski_runSkiJump(TFT_eSPI &tft) {
@@ -1003,24 +1006,17 @@ void ski_runSkiJump(TFT_eSPI &tft) {
 }
 
 //=============================================================================
-// LUGE - PLACEHOLDER
+// LUGE
 //=============================================================================
 void ski_runLuge(TFT_eSPI &tft) {
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.setTextFont(4);
-    tft.setTextDatum(MC_DATUM);
-    tft.drawString("LUGE", SCREEN_W/2, SCREEN_H/2 - 30);
-    tft.setTextFont(2);
-    tft.drawString("Coming Soon!", SCREEN_W/2, SCREEN_H/2 + 10);
-    tft.drawString("Press button to return", SCREEN_W/2, SCREEN_H - 30);
-    
-    while (digitalRead(PIN_KO) == HIGH) {
-        updateAudio();
-        delay(50);
-    }
-    while (digitalRead(PIN_KO) == LOW) delay(10);
-    delay(400);
+    run_Luge(tft);
+}
+
+//=============================================================================
+// CURLING
+//=============================================================================
+void ski_runCurling(TFT_eSPI &tft) {
+    run_Curling(tft);
 }
 
 //=============================================================================
@@ -1056,6 +1052,10 @@ void run_Winter_Olympics(TFT_eSPI &tft) {
                 
             case 2:  // Luge
                 ski_runLuge(tft);
+                break;
+
+            case 3:  
+                ski_runCurling(tft);
                 break;
         }
         
