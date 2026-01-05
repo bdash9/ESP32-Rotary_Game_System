@@ -381,6 +381,13 @@ void IRAM_ATTR handleRotary() {
 void setup() {
   Serial.begin(115200);
   delay(1000);
+
+      Serial.println("=== System Starting ===");
+    Serial.print("Free heap: ");
+    Serial.println(ESP.getFreeHeap());
+    Serial.print("Chip model: ");
+    Serial.println(ESP.getChipModel());
+    
   Serial.println("\n=== ROTARY ARCADE ===");
 
   pinMode(PIN_TRA, INPUT_PULLUP);

@@ -7,6 +7,17 @@
 #include "Ski_Jump.h"
 #include "Luge.h"  
 #include "Curling.h" 
+#include "Biathlon.h" 
+
+#include "esp_task_wdt.h"
+
+// Helper to check free heap
+void wo_printMemory(const char* location) {
+    Serial.print("Free heap at ");
+    Serial.print(location);
+    Serial.print(": ");
+    Serial.println(ESP.getFreeHeap());
+}
 
 extern void playSound(const char *path, bool stopCurrent);
 extern void updateAudio();
@@ -53,17 +64,25 @@ enum WO_GameMode {
     WO_GAME_SKIING,
     WO_GAME_SKI_JUMP,
     WO_GAME_LUGE,
-    WO_GAME_CURLING  
+    WO_GAME_CURLING,
+    WO_GAME_BIATHLON   
 };
 
-// Menu items
-const char* wo_gameMenuTitles[] = {
-    "Downhill Skiing",
-    "Ski Jump",
-    "Luge",
-    "Curling"
+// Menu items - PUT IN PROGMEM
+const char wo_menuTitle0[] PROGMEM = "Downhill Skiing";
+const char wo_menuTitle1[] PROGMEM = "Ski Jump";
+const char wo_menuTitle2[] PROGMEM = "Luge";
+const char wo_menuTitle3[] PROGMEM = "Curling";
+const char wo_menuTitle4[] PROGMEM = "Biathlon";
+
+const char* const wo_gameMenuTitles[] PROGMEM = {
+    wo_menuTitle0,
+    wo_menuTitle1,
+    wo_menuTitle2,
+    wo_menuTitle3,
+    wo_menuTitle4
 };
-const int WO_NUM_OLYMPIC_GAMES = 4;
+const int WO_NUM_OLYMPIC_GAMES = 5;
 
 // Gate structure
 struct WO_Gate {
@@ -266,7 +285,7 @@ void wo_showSplashScreen(TFT_eSPI &tft) {
 }
 
 //=============================================================================
-// GAME MENU
+// GAME MENU - WITH SCROLLING
 //=============================================================================
 int wo_showGameMenu(TFT_eSPI &tft) {
     tft.fillScreen(TFT_BLACK);
@@ -311,43 +330,83 @@ int wo_showGameMenu(TFT_eSPI &tft) {
     
     int selectedIndex = 0;
     int lastSelectedIndex = -1;
+    int scrollOffset = 0;  // Which item is at top of visible window
+    int lastScrollOffset = -1;
+    const int VISIBLE_ITEMS = 4;  // Show 4 items at once
     int lastRotary = rotaryPos;
     int lastBtn = HIGH;
     
     while (true) {
-        if (selectedIndex != lastSelectedIndex) {
+        // Redraw if selection or scroll changed
+        if (selectedIndex != lastSelectedIndex || scrollOffset != lastScrollOffset) {
             // Clear menu area
             tft.fillRect(0, 70, SCREEN_W, SCREEN_H - 70, TFT_BLACK);
             
-            // Draw menu items with adjusted spacing for 4 items
-            for (int i = 0; i < WO_NUM_OLYMPIC_GAMES; i++) {
-                int yPos = 75 + i * 40;  // CHANGED: from 85 + i * 50 to 75 + i * 40
+            // Draw visible menu items
+            for (int i = 0; i < VISIBLE_ITEMS && (scrollOffset + i) < WO_NUM_OLYMPIC_GAMES; i++) {
+                int gameIndex = scrollOffset + i;
+                int yPos = 75 + i * 40;
                 
-                if (i == selectedIndex) {
-                    tft.fillRoundRect(20, yPos - 6, SCREEN_W - 40, 36, 8, TFT_WHITE);  // CHANGED: height from 40 to 36
+                if (gameIndex == selectedIndex) {
+                    tft.fillRoundRect(20, yPos - 6, SCREEN_W - 40, 36, 8, TFT_WHITE);
                     tft.setTextColor(TFT_BLUE, TFT_WHITE);
                 } else {
-                    tft.fillRoundRect(20, yPos - 6, SCREEN_W - 40, 36, 8, TFT_DARKGREY);  // CHANGED: height from 40 to 36
+                    tft.fillRoundRect(20, yPos - 6, SCREEN_W - 40, 36, 8, TFT_DARKGREY);
                     tft.setTextColor(TFT_WHITE, TFT_DARKGREY);
                 }
                 
                 tft.setTextFont(4);
                 tft.setTextDatum(MC_DATUM);
-                tft.drawString(wo_gameMenuTitles[i], SCREEN_W/2, yPos + 10);  // CHANGED: from yPos + 12 to yPos + 10
+                
+                // Read menu title from PROGMEM
+                char buffer[32];
+                strcpy_P(buffer, (char*)pgm_read_ptr(&wo_gameMenuTitles[gameIndex]));
+                tft.drawString(buffer, SCREEN_W/2, yPos + 10);
+            }
+            
+            // Draw scroll indicators if needed
+            tft.setTextFont(2);
+            tft.setTextDatum(MC_DATUM);
+            
+            // Up arrow if not at top
+            if (scrollOffset > 0) {
+                tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+                tft.drawString("^ MORE ^", SCREEN_W/2, 72);
+            }
+            
+            // Down arrow if more items below
+            if (scrollOffset + VISIBLE_ITEMS < WO_NUM_OLYMPIC_GAMES) {
+                tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+                tft.drawString("v MORE v", SCREEN_W/2, SCREEN_H - 10);
             }
             
             lastSelectedIndex = selectedIndex;
+            lastScrollOffset = scrollOffset;
         }
         
         // Handle rotary
         int rotDiff = rotaryPos - lastRotary;
         if (rotDiff > 2) {
             selectedIndex++;
-            if (selectedIndex >= WO_NUM_OLYMPIC_GAMES) selectedIndex = WO_NUM_OLYMPIC_GAMES - 1;
+            if (selectedIndex >= WO_NUM_OLYMPIC_GAMES) {
+                selectedIndex = WO_NUM_OLYMPIC_GAMES - 1;
+            } else {
+                // Auto-scroll down if selected item goes below visible window
+                if (selectedIndex >= scrollOffset + VISIBLE_ITEMS) {
+                    scrollOffset = selectedIndex - VISIBLE_ITEMS + 1;
+                }
+            }
             lastRotary = rotaryPos;
         } else if (rotDiff < -2) {
             selectedIndex--;
-            if (selectedIndex < 0) selectedIndex = 0;
+            if (selectedIndex < 0) {
+                selectedIndex = 0;
+            } else {
+                // Auto-scroll up if selected item goes above visible window
+                if (selectedIndex < scrollOffset) {
+                    scrollOffset = selectedIndex;
+                }
+            }
             lastRotary = rotaryPos;
         }
         
@@ -1020,51 +1079,106 @@ void ski_runCurling(TFT_eSPI &tft) {
 }
 
 //=============================================================================
+// BIATHLON
+//=============================================================================
+void ski_runBiathlon(TFT_eSPI &tft) {
+    run_Biathlon(tft);
+}
+
+//=============================================================================
 // MAIN ENTRY POINT
 //=============================================================================
 void run_Winter_Olympics(TFT_eSPI &tft) {
+    Serial.println("=== Starting Winter Olympics ===");
+    wo_printMemory("Start of Winter Olympics");
+    
+    // Disable watchdog temporarily for splash
+    //esp_task_wdt_reset();
+    
     tft.setRotation(3);
     pinMode(PIN_KO, INPUT_PULLUP);
     pinMode(PIN_PUSH, INPUT_PULLUP);
     
+    // Clear any pending audio
+    stopAudio();
+    delay(100);
+    
+    Serial.println("Showing splash screen...");
+    wo_printMemory("Before splash");
+    
     // Show splash screen (only once) - this starts the music
     wo_showSplashScreen(tft);
     
+    Serial.println("Splash complete, entering main loop...");
+    wo_printMemory("After splash");
+    
     // Main game loop
     while (true) {
+        esp_task_wdt_reset();  // Reset watchdog
+        
+        Serial.println("Showing game menu...");
+        wo_printMemory("Before menu");
+        
         // Show game selection menu - music continues playing
         int selectedGame = wo_showGameMenu(tft);
         
+        Serial.print("Selected game: ");
+        Serial.println(selectedGame);
+        
         // Stop music before starting game
         stopAudio();
+        delay(100);  // Give time for audio to stop
+        
         if (out) out->SetGain(0.5);  // Reset to normal volume for game sounds
-
+        
+        esp_task_wdt_reset();  // Reset watchdog before starting game
+        
+        Serial.println("Starting selected game...");
+        wo_printMemory("Before game start");
         
         // Run selected game
         switch (selectedGame) {
             case 0:  // Downhill Skiing
+                Serial.println("Starting Downhill Skiing");
                 ski_runDownhillSkiing(tft);
                 break;
                 
             case 1:  // Ski Jump
+                Serial.println("Starting Ski Jump");
                 ski_runSkiJump(tft);
                 break;
                 
             case 2:  // Luge
+                Serial.println("Starting Luge");
                 ski_runLuge(tft);
                 break;
 
-            case 3:  
+            case 3:  // Curling
+                Serial.println("Starting Curling");
                 ski_runCurling(tft);
+                break;
+                
+            case 4:  // Biathlon
+                Serial.println("Starting Biathlon");
+                ski_runBiathlon(tft);
                 break;
         }
         
+        Serial.println("Game finished");
+        wo_printMemory("After game");
+        
         // After game ends, restart Olympics theme for menu
+        stopAudio();
+        delay(100);
+        
         if (out) out->SetGain(0.8);  // Higher volume for menu music
         playSound("/sounds/Olympics_Basic_Theme_and_Fanfare.wav", true);
         
         tft.init();
         tft.setRotation(3);
+        
+        Serial.println("Returning to menu...");
+        esp_task_wdt_reset();
         
         // Loop back to menu with music playing
     }
