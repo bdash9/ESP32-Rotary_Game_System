@@ -26,6 +26,8 @@ extern volatile int rotaryPos;
 #define ARENA_BLUE 0x1C9F
 #define DARK_BLUE 0x0010
 #define OLYMPIC_YELLOW 0xFFE0
+#define TEAM_GREEN 0x07E0
+#define TEAM_RED 0xF800
 
 // Game states
 enum CurlingGameState {
@@ -36,15 +38,26 @@ enum CurlingGameState {
   CURLING_GAME_OVER
 };
 
+// Stone structure
+struct CurlingStone {
+  float x, y;
+  float vx, vy;
+  int team;
+  bool active;
+};
+
 // Brusher struct
 struct Brusher {
   float x, y;
+  float prevX, prevY;
   bool movingRight;
   bool active;
 };
 
 // Global variables
 CurlingGameState curlingState = CURLING_READY;
+CurlingStone thrownStones[6];
+int numThrownStones = 0;
 float curlingStoneX = 160;
 float curlingStoneY = 220;
 float curlingStoneVX = 0;
@@ -53,93 +66,78 @@ float curlingAimAngle = 0;
 int curlingPower = 50;
 bool curlingStoneMoving = false;
 unsigned long curlingStartTime = 0;
+int currentTeam = 1;
+int throwCount = 0;
+int team1Score = 0;
+int team2Score = 0;
 
 Brusher brushers[2];
 
 //=============================================================================
-// BEER MUGS - ANGLED AND CLINKING
+// BEER MUGS
 //=============================================================================
 void drawBeerMug(TFT_eSPI &tft, int x, int y, bool facingRight, int size) {
-  uint16_t beerColor = tft.color565(200, 150, 50);
+  uint16_t beerColor = tft.color565(255, 200, 0);
   uint16_t foamColor = tft.color565(255, 250, 230);
   uint16_t glassColor = tft.color565(100, 100, 120);
   
   if (facingRight) {
-    // Right mug - tilted LEFT toward center
-    // Mug body (tilted)
     int tiltOffset = 5;
     tft.fillRect(x - size/2 - tiltOffset, y, size, size*3/4, beerColor);
     tft.drawRect(x - size/2 - tiltOffset, y, size, size*3/4, glassColor);
     tft.drawRect(x - size/2 - tiltOffset + 1, y + 1, size - 2, size*3/4 - 2, glassColor);
-    
-    // Beer inside
     tft.fillRect(x - size/2 - tiltOffset + 3, y + size/6, size - 6, size/2, beerColor);
     
-    // Foam on top
     for (int i = 0; i < 3; i++) {
       int foamY = y + size/6 - i * 3;
       tft.fillEllipse(x - tiltOffset, foamY, size/3, size/10, foamColor);
     }
     
-    // Handle on FAR RIGHT side
     int handleX = x + size/2 + 5;
     tft.drawCircle(handleX, y + size/3, size/4, glassColor);
     tft.drawCircle(handleX, y + size/3, size/4 + 1, glassColor);
     tft.drawCircle(handleX, y + size/3, size/4 + 2, glassColor);
-    // Erase inner part
     tft.fillCircle(handleX + 2, y + size/3, size/5, COLOR_SKY);
     
-    // Bubbles
     tft.fillCircle(x - 5, y + size/4, 2, foamColor);
     tft.fillCircle(x - 8, y + size/3, 2, foamColor);
     
   } else {
-    // Left mug - tilted RIGHT toward center
-    // Mug body (tilted)
     int tiltOffset = 5;
     tft.fillRect(x - size/2 + tiltOffset, y, size, size*3/4, beerColor);
     tft.drawRect(x - size/2 + tiltOffset, y, size, size*3/4, glassColor);
     tft.drawRect(x - size/2 + tiltOffset + 1, y + 1, size - 2, size*3/4 - 2, glassColor);
-    
-    // Beer inside
     tft.fillRect(x - size/2 + tiltOffset + 3, y + size/6, size - 6, size/2, beerColor);
     
-    // Foam on top
     for (int i = 0; i < 3; i++) {
       int foamY = y + size/6 - i * 3;
       tft.fillEllipse(x + tiltOffset, foamY, size/3, size/10, foamColor);
     }
     
-    // Handle on FAR LEFT side
     int handleX = x - size/2 - 5;
     tft.drawCircle(handleX, y + size/3, size/4, glassColor);
     tft.drawCircle(handleX, y + size/3, size/4 + 1, glassColor);
     tft.drawCircle(handleX, y + size/3, size/4 + 2, glassColor);
-    // Erase inner part
     tft.fillCircle(handleX - 2, y + size/3, size/5, COLOR_SKY);
     
-    // Bubbles
     tft.fillCircle(x + 5, y + size/4, 2, foamColor);
     tft.fillCircle(x + 8, y + size/3, 2, foamColor);
   }
 }
 
 void drawBeerMugs(TFT_eSPI &tft, int x1, int y1, int x2, int y2, int size) {
-  drawBeerMug(tft, x1, y1, false, size);  // Left mug facing right
-  drawBeerMug(tft, x2, y2, true, size);   // Right mug facing left
+  drawBeerMug(tft, x1, y1, false, size);
+  drawBeerMug(tft, x2, y2, true, size);
   
-  // Clink sparkle effect
   int midX = (x1 + x2) / 2;
   int midY = (y1 + y2) / 2 - 10;
   
-  // Multiple sparkle lines
   for (int i = 0; i < 5; i++) {
     tft.drawLine(midX - 8 + i, midY - 8, midX - 12 + i, midY - 15, OLYMPIC_YELLOW);
     tft.drawLine(midX + 8 - i, midY - 8, midX + 12 - i, midY - 15, OLYMPIC_YELLOW);
   }
   tft.fillCircle(midX, midY, 3, OLYMPIC_YELLOW);
   
-  // "CLINK!" text
   tft.setTextColor(OLYMPIC_YELLOW, COLOR_SKY);
   tft.setTextFont(2);
   tft.setTextDatum(MC_DATUM);
@@ -147,18 +145,133 @@ void drawBeerMugs(TFT_eSPI &tft, int x1, int y1, int x2, int y2, int size) {
 }
 
 //=============================================================================
+// OLYMPIC-STYLE STADIUM SEATING - CONTINUOUS ROWS ALONG ICE
+//=============================================================================
+void drawFan(TFT_eSPI &tft, int x, int y, uint16_t shirtColor, int animFrame, int size) {
+  uint16_t skinTone = tft.color565(220, 180, 140);
+  
+  // Head
+  tft.fillCircle(x, y, size, skinTone);
+  
+  // Body
+  tft.fillRect(x - size/2, y + size, size, size*2, shirtColor);
+  
+  // Arms (animated waving)
+  if (animFrame % 3 == 0) {
+    tft.drawLine(x - size/2, y + size, x - size*2, y, shirtColor);
+    tft.drawLine(x + size/2, y + size, x + size*2, y, shirtColor);
+  }
+}
+
+void drawOlympicBleachers(TFT_eSPI &tft, int animFrame) {
+  int iceBottom = SCREEN_H - 50;
+  int iceTop = 30;
+  int iceLeftBottom = 60;
+  int iceRightBottom = 260;
+  int iceLeftTop = 130;
+  int iceRightTop = 190;
+  
+  uint16_t seatColor = tft.color565(20, 80, 200);  // Blue seats
+  uint16_t railColor = tft.color565(200, 200, 200);
+  
+  // LEFT BLEACHERS - 4 CONTINUOUS TIERS ALONG THE ICE
+  for (int tier = 0; tier < 4; tier++) {
+    int tierOffset = 12 + (tier * 10);  // Each tier gets further from ice and higher
+    
+    // Draw continuous row along the length of ice
+    for (int segment = 0; segment < 10; segment++) {
+      float t = segment / 10.0f;
+      
+      // Calculate position following ice perspective
+      int segY = iceTop + (int)(t * (iceBottom - iceTop));
+      int iceEdgeX = iceLeftTop + (int)(t * (iceLeftBottom - iceLeftTop));
+      
+      // Seat position - offset from ice edge, elevated by tier
+      int seatX = iceEdgeX - tierOffset - 8;
+      int seatY = segY - (tier * 8);  // Elevate as tier increases
+      int seatWidth = 8;
+      int seatHeight = (int)(20 * (1.0f + t * 0.6f));  // Grows with perspective
+      
+      // Draw seat
+      tft.fillRect(seatX, seatY, seatWidth, seatHeight, seatColor);
+      
+      // Railing at front of tier
+      if (tier == 0) {
+        tft.drawFastHLine(seatX, seatY, seatWidth, railColor);
+      }
+      
+      // Draw fans (every other segment, first 2 tiers only)
+      if (tier < 2 && segment % 2 == 0) {
+        int fanSize = 2 + (int)(t * 1.5f);
+        drawFan(tft, seatX + seatWidth/2, seatY + 2, TEAM_GREEN, animFrame + segment + tier, fanSize);
+      }
+    }
+    
+    // Aisle/separator line between tiers
+    if (tier < 3) {
+      for (int segment = 0; segment < 10; segment++) {
+        float t = segment / 10.0f;
+        int segY = iceTop + (int)(t * (iceBottom - iceTop));
+        int iceEdgeX = iceLeftTop + (int)(t * (iceLeftBottom - iceLeftTop));
+        int separatorX = iceEdgeX - tierOffset - 8;
+        int separatorY = segY - (tier * 8) - 2;
+        tft.drawPixel(separatorX, separatorY, railColor);
+      }
+    }
+  }
+  
+  // RIGHT BLEACHERS - 4 CONTINUOUS TIERS ALONG THE ICE
+  for (int tier = 0; tier < 4; tier++) {
+    int tierOffset = 12 + (tier * 10);
+    
+    // Draw continuous row along the length of ice
+    for (int segment = 0; segment < 10; segment++) {
+      float t = segment / 10.0f;
+      
+      int segY = iceTop + (int)(t * (iceBottom - iceTop));
+      int iceEdgeX = iceRightTop + (int)(t * (iceRightBottom - iceRightTop));
+      
+      int seatX = iceEdgeX + tierOffset;
+      int seatY = segY - (tier * 8);
+      int seatWidth = 8;
+      int seatHeight = (int)(20 * (1.0f + t * 0.6f));
+      
+      // Draw seat
+      tft.fillRect(seatX, seatY, seatWidth, seatHeight, seatColor);
+      
+      // Railing
+      if (tier == 0) {
+        tft.drawFastHLine(seatX, seatY, seatWidth, railColor);
+      }
+      
+      // Draw fans
+      if (tier < 2 && segment % 2 == 0) {
+        int fanSize = 2 + (int)(t * 1.5f);
+        drawFan(tft, seatX + seatWidth/2, seatY + 2, TEAM_RED, animFrame + segment + tier, fanSize);
+      }
+    }
+    
+    // Aisle/separator
+    if (tier < 3) {
+      for (int segment = 0; segment < 10; segment++) {
+        float t = segment / 10.0f;
+        int segY = iceTop + (int)(t * (iceBottom - iceTop));
+        int iceEdgeX = iceRightTop + (int)(t * (iceRightBottom - iceRightTop));
+        int separatorX = iceEdgeX + tierOffset;
+        int separatorY = segY - (tier * 8) - 2;
+        tft.drawPixel(separatorX, separatorY, railColor);
+      }
+    }
+  }
+}
+
+//=============================================================================
 // SPECTATORS FOR SPLASH SCREEN
 //=============================================================================
 void drawSpectator(TFT_eSPI &tft, int x, int y, uint16_t shirtColor) {
   uint16_t skinTone = tft.color565(220, 180, 140);
-  
-  // Head
   tft.fillCircle(x, y, 4, skinTone);
-  
-  // Body
   tft.fillRect(x - 3, y + 4, 6, 8, shirtColor);
-  
-  // Arms raised (cheering)
   tft.drawLine(x - 3, y + 6, x - 6, y + 2, shirtColor);
   tft.drawLine(x - 3, y + 7, x - 6, y + 3, shirtColor);
   tft.drawLine(x + 3, y + 6, x + 6, y + 2, shirtColor);
@@ -166,47 +279,63 @@ void drawSpectator(TFT_eSPI &tft, int x, int y, uint16_t shirtColor) {
 }
 
 void drawSpectators(TFT_eSPI &tft) {
-  // Draw crowd of spectators
   uint16_t colors[] = {TFT_RED, TFT_BLUE, TFT_GREEN, TFT_YELLOW, TFT_CYAN, TFT_MAGENTA};
-  
-  // Left side crowd
   for (int i = 0; i < 4; i++) {
     drawSpectator(tft, 20 + i * 15, 210 + (i % 2) * 5, colors[i % 6]);
   }
-  
-  // Right side crowd
   for (int i = 0; i < 4; i++) {
     drawSpectator(tft, 260 + i * 15, 210 + (i % 2) * 5, colors[(i + 3) % 6]);
   }
 }
 
 //=============================================================================
-// BRUSHER/SWEEPER - IMPROVED
+// GET ICE COLOR AT POSITION
 //=============================================================================
+uint16_t getIceColorAt(TFT_eSPI &tft, int y) {
+  int iceTop = 30;
+  int iceBottom = SCREEN_H - 50;
+  
+  if (y < iceTop) return ARENA_BLUE;
+  if (y >= iceBottom) return ARENA_BLUE;
+  
+  float t = (float)(y - iceTop) / (iceBottom - iceTop);
+  uint16_t iceColor = tft.color565(240 - (int)(t * 30), 245 - (int)(t * 30), 255);
+  return iceColor;
+}
+
+//=============================================================================
+// BRUSHER/SWEEPER - WITH PROPER ICE COLOR ERASE (EXTENDED UP)
+//=============================================================================
+void eraseBrusher(TFT_eSPI &tft, float x, float y) {
+  // Erase by drawing ice color at that Y position
+  // Extended upward to cover top of head
+  int eraseY = (int)y;
+  int eraseX = (int)x;
+  
+  for (int dy = -8; dy < 30; dy++) {  // CHANGED: Start at -8 instead of -5 to cover helmet top
+    uint16_t iceColor = getIceColorAt(tft, eraseY + dy);
+    tft.drawFastHLine(eraseX - 12, eraseY + dy, 32, iceColor);
+  }
+}
+
 void drawBrusher(TFT_eSPI &tft, float x, float y, int team, int animFrame) {
-  uint16_t uniformColor = (team == 1) ? DARK_BLUE : TFT_RED;
+  uint16_t uniformColor = (team == 1) ? TEAM_GREEN : TEAM_RED;
   uint16_t skinTone = tft.color565(220, 180, 140);
   
-  // Legs
   tft.fillRect((int)x - 4, (int)y + 12, 3, 10, uniformColor);
   tft.fillRect((int)x + 1, (int)y + 12, 3, 10, uniformColor);
   tft.fillRect((int)x - 4, (int)y + 21, 4, 2, TFT_BLACK);
   tft.fillRect((int)x + 1, (int)y + 21, 4, 2, TFT_BLACK);
-  
-  // Body
   tft.fillRect((int)x - 5, (int)y + 2, 10, 12, uniformColor);
   
-  // Arms with broom - animated
   int brushAngle = (animFrame % 2 == 0) ? 0 : 4;
   tft.fillRect((int)x - 8, (int)y + 5, 4, 8, uniformColor);
   tft.fillRect((int)x + 4, (int)y + 5, 4, 10, uniformColor);
   
-  // Broom
   tft.drawLine((int)x + 6, (int)y + 14, (int)x + 10 + brushAngle, (int)y + 20, OLYMPIC_YELLOW);
   tft.drawLine((int)x + 6, (int)y + 15, (int)x + 10 + brushAngle, (int)y + 21, OLYMPIC_YELLOW);
   tft.fillRect((int)x + 9 + brushAngle, (int)y + 19, 8, 3, OLYMPIC_YELLOW);
   
-  // Head
   tft.fillCircle((int)x, (int)y, 4, skinTone);
   tft.fillCircle((int)x, (int)y - 2, 4, uniformColor);
 }
@@ -215,42 +344,44 @@ void drawBrusher(TFT_eSPI &tft, float x, float y, int team, int animFrame) {
 // PLAYER
 //=============================================================================
 void drawCurlingPlayer(TFT_eSPI &tft, int x, int y, int team, bool hasStone) {
-  uint16_t uniformColor = (team == 1) ? DARK_BLUE : TFT_RED;
+  uint16_t uniformColor = (team == 1) ? TEAM_GREEN : TEAM_RED;
   uint16_t skinTone = tft.color565(220, 180, 140);
-  uint16_t stoneColor = (team == 1) ? DARK_BLUE : TFT_RED;
+  uint16_t stoneColor = (team == 1) ? TEAM_GREEN : TEAM_RED;
   
-  // Crouched legs
   tft.fillRect(x - 15, y + 15, 6, 20, uniformColor);
   tft.fillRect(x - 15, y + 33, 8, 4, TFT_BLACK);
   tft.fillRect(x - 5, y + 20, 5, 12, uniformColor);
   tft.fillRect(x - 5, y + 30, 6, 3, TFT_BLACK);
-  
-  // Body
   tft.fillRect(x - 8, y, 12, 18, uniformColor);
-  
-  // Extended arm
   tft.fillRect(x - 3, y + 3, 15, 4, uniformColor);
   tft.fillCircle(x + 12, y + 5, 2, skinTone);
   
-  // Stone in hand
   if (hasStone) {
     tft.fillCircle(x + 18, y + 5, 6, stoneColor);
     tft.drawCircle(x + 18, y + 5, 6, TFT_BLACK);
     tft.fillRect(x + 16, y + 2, 4, 3, OLYMPIC_YELLOW);
   }
   
-  // Other arm
   tft.fillRect(x - 10, y + 8, 4, 8, uniformColor);
-  
-  // Head
   tft.fillCircle(x, y - 3, 5, skinTone);
   tft.fillCircle(x, y - 5, 6, uniformColor);
 }
 
 //=============================================================================
-// PERSPECTIVE RINK VIEW
+// DRAW STONE
 //=============================================================================
-void drawPerspectiveRink(TFT_eSPI &tft) {
+void drawStone(TFT_eSPI &tft, int x, int y, int team) {
+  uint16_t stoneColor = (team == 1) ? TEAM_GREEN : TEAM_RED;
+  tft.fillCircle(x, y, 8, stoneColor);
+  tft.drawCircle(x, y, 8, TFT_BLACK);
+  tft.drawCircle(x, y, 7, TFT_BLACK);
+  tft.fillRect(x - 3, y - 2, 6, 3, OLYMPIC_YELLOW);
+}
+
+//=============================================================================
+// STATIC RINK ELEMENTS
+//=============================================================================
+void drawStaticRink(TFT_eSPI &tft, int animFrame) {
   tft.fillScreen(ARENA_BLUE);
   
   // Ice with perspective
@@ -280,7 +411,10 @@ void drawPerspectiveRink(TFT_eSPI &tft) {
     tft.drawFastVLine(right + 2, y, 1, tft.color565(20, 60, 120));
   }
   
-  // House at far end
+  // Draw Olympic-style bleachers
+  drawOlympicBleachers(tft, animFrame);
+  
+  // House
   int houseX = SCREEN_W / 2;
   int houseY = 50;
   tft.fillCircle(houseX, houseY, 20, COLOR_HOUSE_BLUE);
@@ -295,7 +429,7 @@ void drawPerspectiveRink(TFT_eSPI &tft) {
     tft.drawPixel(houseX + 1, y, tft.color565(100, 150, 255));
   }
   
-  // Hog lines
+  // Hog line
   int hogLine1 = iceTop + 35;
   for (int x = iceLeftTop; x < iceRightTop; x += 3) {
     tft.drawPixel(x, hogLine1, TFT_RED);
@@ -313,7 +447,6 @@ void drawAimArrow(TFT_eSPI &tft, int x, int y, float angle) {
   tft.drawLine(x, y, endX, endY, OLYMPIC_YELLOW);
   tft.drawLine(x + 1, y, endX + 1, endY, OLYMPIC_YELLOW);
   
-  // Arrow head
   float arrowAngle = 0.4;
   int arrowLen = 8;
   int ax1 = endX + (int)(sin(angle - arrowAngle) * arrowLen);
@@ -348,28 +481,61 @@ void drawPowerBar(TFT_eSPI &tft, int power) {
 }
 
 //=============================================================================
-// DRAW STONE
+// GOLD MEDAL DRAWING
 //=============================================================================
-void drawStone(TFT_eSPI &tft, int x, int y, int team) {
-  uint16_t stoneColor = (team == 1) ? DARK_BLUE : TFT_RED;
-  tft.fillCircle(x, y, 8, stoneColor);
-  tft.drawCircle(x, y, 8, TFT_BLACK);
-  tft.drawCircle(x, y, 7, TFT_BLACK);
-  tft.fillRect(x - 3, y - 2, 6, 3, OLYMPIC_YELLOW);
+void drawGoldMedal(TFT_eSPI &tft, int x, int y) {
+  uint16_t goldColor = 0xFEA0;  // Gold color
+  
+  // Medal circle
+  tft.fillCircle(x, y, 25, goldColor);
+  tft.drawCircle(x, y, 25, TFT_BLACK);
+  tft.drawCircle(x, y, 24, TFT_BLACK);
+  tft.drawCircle(x, y, 26, TFT_BLACK);
+  
+  // Inner circle detail
+  tft.drawCircle(x, y, 18, TFT_BLACK);
+  
+  // "1" in center
+  tft.setTextColor(TFT_BLACK, goldColor);
+  tft.setTextFont(4);
+  tft.setTextDatum(MC_DATUM);
+  tft.drawString("1", x, y);
+  
+  // Ribbon/strap
+  tft.fillRect(x - 3, y - 25, 6, 15, TFT_RED);
+  tft.fillRect(x - 6, y - 35, 5, 15, TFT_RED);
+  tft.fillRect(x + 1, y - 35, 5, 15, TFT_RED);
+  
+  // "GOLD" text below
+  tft.setTextColor(goldColor, TFT_BLACK);
+  tft.setTextFont(2);
+  tft.setTextDatum(TC_DATUM);
+  tft.drawString("GOLD", x, y + 32);
 }
 
 //=============================================================================
-// UPDATE PHYSICS
+// PHYSICS - BRUSHERS DON'T CROSS CENTER
 //=============================================================================
 void updateBrushers() {
   for (int i = 0; i < 2; i++) {
     if (!brushers[i].active) continue;
+    
+    brushers[i].prevX = brushers[i].x;
+    brushers[i].prevY = brushers[i].y;
+    
     if (brushers[i].movingRight) {
       brushers[i].x += 2;
-      if (brushers[i].x > SCREEN_W/2 + 30) brushers[i].movingRight = false;
+      // Stop at center line instead of going past it
+      if (brushers[i].x > SCREEN_W/2 - 2) {  // Stop 2 pixels before center
+        brushers[i].x = SCREEN_W/2 - 2;
+        brushers[i].movingRight = false;
+      }
     } else {
       brushers[i].x -= 2;
-      if (brushers[i].x < SCREEN_W/2 - 30) brushers[i].movingRight = true;
+      // Stop at reasonable distance from edge
+      if (brushers[i].x < SCREEN_W/2 - 30) {
+        brushers[i].movingRight = true;
+      }
     }
   }
 }
@@ -382,8 +548,63 @@ void updateStonePhysics() {
   curlingStoneX += curlingStoneVX;
   curlingStoneY += curlingStoneVY;
   
-  if (curlingStoneX < 60) curlingStoneX = 60;
-  if (curlingStoneX > SCREEN_W - 60) curlingStoneX = SCREEN_W - 60;
+  // Check collisions with thrown stones
+  for (int i = 0; i < numThrownStones; i++) {
+    if (!thrownStones[i].active) continue;
+    
+    float dx = thrownStones[i].x - curlingStoneX;
+    float dy = thrownStones[i].y - curlingStoneY;
+    float dist = sqrt(dx * dx + dy * dy);
+    
+    if (dist < 16) {
+      float angle = atan2(dy, dx);
+      float cos_a = cos(angle);
+      float sin_a = sin(angle);
+      
+      // Transfer more momentum to knocked stone
+      thrownStones[i].vx = cos_a * abs(curlingStoneVX) * 0.8;  // Increased from 0.7
+      thrownStones[i].vy = sin_a * abs(curlingStoneVY) * 0.8;
+      
+      curlingStoneVX *= 0.3;
+      curlingStoneVY *= 0.3;
+      
+      float overlap = 16 - dist;
+      curlingStoneX -= cos_a * overlap * 0.5;
+      curlingStoneY -= sin_a * overlap * 0.5;
+      thrownStones[i].x += cos_a * overlap * 0.5;
+      thrownStones[i].y += sin_a * overlap * 0.5;
+    }
+  }
+  
+  // Update thrown stones - KEEP MOVING EVEN OFF ICE
+  for (int i = 0; i < numThrownStones; i++) {
+    if (!thrownStones[i].active) continue;
+    
+    // Apply friction
+    thrownStones[i].vx *= 0.96;  // Slightly less friction so they slide further
+    thrownStones[i].vy *= 0.96;
+    
+    // Update position
+    thrownStones[i].x += thrownStones[i].vx;
+    thrownStones[i].y += thrownStones[i].vy;
+    
+    // Only deactivate when WAY off screen (not just out of play area)
+    if (thrownStones[i].x < 0 || thrownStones[i].x > SCREEN_W ||
+        thrownStones[i].y < 0 || thrownStones[i].y > SCREEN_H) {
+      thrownStones[i].active = false;
+    }
+    
+    // Stop if too slow
+    if (abs(thrownStones[i].vx) < 0.05 && abs(thrownStones[i].vy) < 0.05) {
+      thrownStones[i].vx = 0;
+      thrownStones[i].vy = 0;
+    }
+  }
+  
+  if (curlingStoneX < 60 || curlingStoneX > SCREEN_W - 60) {
+    curlingStoneMoving = false;
+    return;
+  }
   
   if (abs(curlingStoneVX) < 0.1 && abs(curlingStoneVY) < 0.1) {
     curlingStoneMoving = false;
@@ -397,16 +618,32 @@ void updateStonePhysics() {
   }
 }
 
-int calculateScore() {
-  float dx = curlingStoneX - SCREEN_W/2;
-  float dy = curlingStoneY - 50;
-  float dist = sqrt(dx*dx + dy*dy);
+int calculateFinalScore() {
+  int score1 = 0;
+  int score2 = 0;
   
-  if (dist < 10) return 100;
-  if (dist < 20) return 75;
-  if (dist < 30) return 50;
-  if (dist < 40) return 25;
-  return 0;
+  for (int i = 0; i < numThrownStones; i++) {
+    if (!thrownStones[i].active) continue;
+    
+    float dx = thrownStones[i].x - SCREEN_W/2;
+    float dy = thrownStones[i].y - 50;
+    float dist = sqrt(dx*dx + dy*dy);
+    
+    if (dist < 20) {
+      int points = 0;
+      if (dist < 5) points = 10;
+      else if (dist < 10) points = 7;
+      else if (dist < 15) points = 5;
+      else points = 3;
+      
+      if (thrownStones[i].team == 1) score1 += points;
+      else score2 += points;
+    }
+  }
+  
+  team1Score = score1;
+  team2Score = score2;
+  return (score1 > score2) ? 1 : (score2 > score1) ? 2 : 0;
 }
 
 //=============================================================================
@@ -419,18 +656,19 @@ void run_Curling(TFT_eSPI &tft) {
   while (digitalRead(PIN_KO) == LOW) delay(10);
   delay(300);
   
-  // SPLASH 1 - Beer mugs
+  // SPLASH 1
   tft.fillScreen(COLOR_SKY);
+  
   tft.setTextColor(TFT_BLUE, COLOR_SKY);
   tft.setTextFont(4);
   tft.setTextDatum(MC_DATUM);
   tft.drawString("CURLING", SCREEN_W/2, 40);
   
-  drawBeerMugs(tft, 100, 100, 220, 100, 40);
+  drawBeerMugs(tft, 100, 110, 220, 110, 40);
   
   tft.setTextColor(TFT_BLACK, COLOR_SKY);
   tft.setTextFont(2);
-  tft.drawString("The Coolest Sport on Ice!", SCREEN_W/2, 170);
+  tft.drawString("The Coolest Sport on Ice!", SCREEN_W/2, 180);
   
   bool showPrompt = true;
   unsigned long lastBlink = millis();
@@ -461,7 +699,7 @@ void run_Curling(TFT_eSPI &tft) {
   while (digitalRead(PIN_KO) == LOW) delay(10);
   delay(400);
   
-  // SPLASH 2 - Instructions with spectators
+  // SPLASH 2
   tft.fillScreen(COLOR_SKY);
   tft.setTextColor(TFT_BLUE, COLOR_SKY);
   tft.setTextFont(4);
@@ -474,9 +712,8 @@ void run_Curling(TFT_eSPI &tft) {
   tft.drawString("2. Press button to lock aim", SCREEN_W/2, 95);
   tft.drawString("3. Set power with rotary", SCREEN_W/2, 120);
   tft.drawString("4. Press button to throw!", SCREEN_W/2, 145);
-  tft.drawString("Get closest to center!", SCREEN_W/2, 170);
+  tft.drawString("3 rounds x 2 teams!", SCREEN_W/2, 170);
   
-  // Draw spectators at bottom
   drawSpectators(tft);
   
   showPrompt = true;
@@ -508,205 +745,297 @@ void run_Curling(TFT_eSPI &tft) {
   while (digitalRead(PIN_KO) == LOW) delay(10);
   delay(400);
   
-  // Countdown
-  drawPerspectiveRink(tft);
-  for (int countdown = 3; countdown >= 1; countdown--) {
-    tft.setTextColor(TFT_YELLOW, ARENA_BLUE);
-    tft.setTextFont(7);
-    tft.setTextDatum(MC_DATUM);
-    if (countdown == 3) tft.drawString("Ready", SCREEN_W/2, SCREEN_H/2);
-    else if (countdown == 2) tft.drawString("Set", SCREEN_W/2, SCREEN_H/2);
-    else tft.drawString("Go!", SCREEN_W/2, SCREEN_H/2);
-    playSound("/sounds/beep.wav", false);
-    unsigned long countStart = millis();
-    while (millis() - countStart < 800) {
-      updateAudio();
-      delay(10);
-    }
-    tft.fillRect(0, SCREEN_H/2 - 40, SCREEN_W, 80, ARENA_BLUE);
-  }
+while (digitalRead(PIN_KO) == LOW) delay(10);
+  delay(400);
+  
+  // Init game - START IMMEDIATELY
   playSound("/sounds/beep_go.wav", false);
-  delay(300);
   
   // Init game
-  curlingState = CURLING_AIMING;
   curlingStartTime = millis();
-  curlingStoneX = SCREEN_W/2;
-  curlingStoneY = SCREEN_H - 85;
-  curlingAimAngle = 0;
-  curlingPower = 50;
-  curlingStoneMoving = false;
+  numThrownStones = 0;
+  currentTeam = 1;
+  throwCount = 0;
+  team1Score = 0;
+  team2Score = 0;
+  
+  for (int i = 0; i < 6; i++) {
+    thrownStones[i].active = false;
+    thrownStones[i].x = 0;
+    thrownStones[i].y = 0;
+    thrownStones[i].vx = 0;
+    thrownStones[i].vy = 0;
+    thrownStones[i].team = 0;
+  }
   
   brushers[0].x = SCREEN_W/2 - 20;
   brushers[0].y = 100;
+  brushers[0].prevX = brushers[0].x;
+  brushers[0].prevY = brushers[0].y;
   brushers[0].movingRight = true;
   brushers[0].active = true;
   
   brushers[1].x = SCREEN_W/2 + 20;
   brushers[1].y = 110;
+  brushers[1].prevX = brushers[1].x;
+  brushers[1].prevY = brushers[1].y;
   brushers[1].movingRight = false;
   brushers[1].active = true;
   
   int lastRotary = rotaryPos;
   lastBtn = HIGH;
-  static int sweepFrame = 0;
+  int animFrame = 0;
   
-  // AIMING PHASE
-  while (curlingState == CURLING_AIMING) {
-    sweepFrame++;
-    drawPerspectiveRink(tft);
-    drawBrusher(tft, brushers[0].x, brushers[0].y, 1, sweepFrame);
-    drawBrusher(tft, brushers[1].x, brushers[1].y, 1, sweepFrame);
-    updateBrushers();
+  // MAIN GAME LOOP
+  while (throwCount < 6) {
+    currentTeam = (throwCount % 2 == 0) ? 1 : 2;
     
-    int rotDiff = rotaryPos - lastRotary;
-    if (abs(rotDiff) > 1) {
-      curlingAimAngle += rotDiff * 0.03;
-      curlingAimAngle = constrain(curlingAimAngle, -0.6, 0.6);
-      lastRotary = rotaryPos;
-    }
+    curlingState = CURLING_AIMING;
+    curlingAimAngle = 0;
+    curlingPower = 50;
+    curlingStoneMoving = false;
     
-    drawCurlingPlayer(tft, SCREEN_W/2 - 30, SCREEN_H - 85, 1, true);
-    drawAimArrow(tft, SCREEN_W/2 - 12, SCREEN_H - 85, curlingAimAngle);
+    brushers[0].active = true;
+    brushers[1].active = true;
     
-    tft.setTextColor(TFT_WHITE, ARENA_BLUE);
-    tft.setTextFont(2);
-    tft.setTextDatum(BC_DATUM);
-    tft.drawString("AIM with rotary", SCREEN_W/2, SCREEN_H - 5);
+    animFrame++;
+    drawStaticRink(tft, animFrame);
     
-    int btn = digitalRead(PIN_KO);
-    if (btn == LOW && lastBtn == HIGH) {
-      curlingState = CURLING_POWER;
-      playSound("/sounds/beep.wav", false);
-      delay(200);
-    }
-    lastBtn = btn;
-    updateAudio();
-    delay(30);
-  }
-  
-  // POWER PHASE
-  while (curlingState == CURLING_POWER) {
-    sweepFrame++;
-    drawPerspectiveRink(tft);
-    drawBrusher(tft, brushers[0].x, brushers[0].y, 1, sweepFrame);
-drawBrusher(tft, brushers[1].x, brushers[1].y, 1, sweepFrame);
-    updateBrushers();
-    
-    int rotDiff = rotaryPos - lastRotary;
-    if (abs(rotDiff) > 1) {
-      curlingPower += rotDiff * 2;
-      curlingPower = constrain(curlingPower, 10, 100);
-      lastRotary = rotaryPos;
-    }
-    
-    drawCurlingPlayer(tft, SCREEN_W/2 - 30, SCREEN_H - 85, 1, true);
-    drawAimArrow(tft, SCREEN_W/2 - 12, SCREEN_H - 85, curlingAimAngle);
-    drawPowerBar(tft, curlingPower);
-    
-    tft.setTextColor(TFT_WHITE, ARENA_BLUE);
-    tft.setTextFont(2);
-    tft.setTextDatum(BC_DATUM);
-    tft.drawString("SET POWER with rotary", SCREEN_W/2, SCREEN_H - 5);
-    
-    int btn = digitalRead(PIN_KO);
-    if (btn == LOW && lastBtn == HIGH) {
-      curlingState = CURLING_THROWING;
-      playSound("/sounds/beep_go.wav", false);
+    // AIMING PHASE
+    while (curlingState == CURLING_AIMING) {
+      eraseBrusher(tft, brushers[0].prevX, brushers[0].prevY);
+      eraseBrusher(tft, brushers[1].prevX, brushers[1].prevY);
       
-      // Launch stone
-      float speed = curlingPower / 10.0;
-      curlingStoneVX = sin(curlingAimAngle) * speed;
-      curlingStoneVY = -cos(curlingAimAngle) * speed;
-      curlingStoneMoving = true;
-      curlingStoneX = SCREEN_W/2 - 12;
-      curlingStoneY = SCREEN_H - 85;
+      updateBrushers();
       
-      delay(200);
+      int rotDiff = rotaryPos - lastRotary;
+      if (abs(rotDiff) > 1) {
+        curlingAimAngle += rotDiff * 0.03;
+        curlingAimAngle = constrain(curlingAimAngle, -0.6, 0.6);
+        lastRotary = rotaryPos;
+        
+        drawStaticRink(tft, animFrame);
+      }
+      
+      for (int i = 0; i < numThrownStones; i++) {
+        if (thrownStones[i].active) {
+          drawStone(tft, (int)thrownStones[i].x, (int)thrownStones[i].y, thrownStones[i].team);
+        }
+      }
+      
+      drawBrusher(tft, brushers[0].x, brushers[0].y, currentTeam, animFrame);
+      drawBrusher(tft, brushers[1].x, brushers[1].y, currentTeam, animFrame);
+      drawCurlingPlayer(tft, SCREEN_W/2 - 30, SCREEN_H - 85, currentTeam, true);
+      drawAimArrow(tft, SCREEN_W/2 - 12, SCREEN_H - 85, curlingAimAngle);
+      
+      tft.fillRect(0, 0, SCREEN_W, 20, ARENA_BLUE);
+      tft.setTextColor((currentTeam == 1) ? TEAM_GREEN : TEAM_RED, ARENA_BLUE);
+      tft.setTextFont(2);
+      tft.setTextDatum(MC_DATUM);
+      char buf[32];
+      snprintf(buf, sizeof(buf), "Team %d - Throw %d/6", currentTeam, throwCount + 1);
+      tft.drawString(buf, SCREEN_W/2, 8);
+      
+      tft.setTextColor(TFT_WHITE, ARENA_BLUE);
+      tft.setTextDatum(BC_DATUM);
+      tft.drawString("AIM with rotary", SCREEN_W/2, SCREEN_H - 5);
+      
+      int btn = digitalRead(PIN_KO);
+      if (btn == LOW && lastBtn == HIGH) {
+        curlingState = CURLING_POWER;
+        playSound("/sounds/beep.wav", false);
+        delay(200);
+      }
+      lastBtn = btn;
+      updateAudio();
+      delay(150);
     }
-    lastBtn = btn;
-    updateAudio();
-    delay(30);
+    
+    // POWER PHASE
+    while (curlingState == CURLING_POWER) {
+      eraseBrusher(tft, brushers[0].prevX, brushers[0].prevY);
+      eraseBrusher(tft, brushers[1].prevX, brushers[1].prevY);
+      
+      updateBrushers();
+      
+      int rotDiff = rotaryPos - lastRotary;
+      if (abs(rotDiff) > 1) {
+        curlingPower += rotDiff * 2;
+        curlingPower = constrain(curlingPower, 10, 100);
+        lastRotary = rotaryPos;
+        
+        drawStaticRink(tft, animFrame);
+      }
+      
+      for (int i = 0; i < numThrownStones; i++) {
+        if (thrownStones[i].active) {
+          drawStone(tft, (int)thrownStones[i].x, (int)thrownStones[i].y, thrownStones[i].team);
+        }
+      }
+      
+      drawBrusher(tft, brushers[0].x, brushers[0].y, currentTeam, animFrame);
+      drawBrusher(tft, brushers[1].x, brushers[1].y, currentTeam, animFrame);
+      drawCurlingPlayer(tft, SCREEN_W/2 - 30, SCREEN_H - 85, currentTeam, true);
+      drawAimArrow(tft, SCREEN_W/2 - 12, SCREEN_H - 85, curlingAimAngle);
+      drawPowerBar(tft, curlingPower);
+      
+      tft.fillRect(0, 0, SCREEN_W, 20, ARENA_BLUE);
+      tft.setTextColor((currentTeam == 1) ? TEAM_GREEN : TEAM_RED, ARENA_BLUE);
+      tft.setTextFont(2);
+      tft.setTextDatum(MC_DATUM);
+      char buf[32];
+      snprintf(buf, sizeof(buf), "Team %d - Throw %d/6", currentTeam, throwCount + 1);
+      tft.drawString(buf, SCREEN_W/2, 8);
+      
+      tft.setTextColor(TFT_WHITE, ARENA_BLUE);
+      tft.setTextDatum(BC_DATUM);
+      tft.drawString("SET POWER with rotary", SCREEN_W/2, SCREEN_H - 5);
+      
+      int btn = digitalRead(PIN_KO);
+      if (btn == LOW && lastBtn == HIGH) {
+        curlingState = CURLING_THROWING;
+        playSound("/sounds/beep_go.wav", false);
+        
+        float speed = curlingPower / 10.0;
+        curlingStoneVX = sin(curlingAimAngle) * speed;
+        curlingStoneVY = -cos(curlingAimAngle) * speed;
+        curlingStoneMoving = true;
+        curlingStoneX = SCREEN_W/2 - 12;
+        curlingStoneY = SCREEN_H - 85;
+        
+        delay(200);
+      }
+      lastBtn = btn;
+      updateAudio();
+      delay(150);
+    }
+    
+// THROWING ANIMATION - OPTIMIZED
+    bool brusher0Done = false;
+    bool brusher1Done = false;
+    
+    float prevStoneX = curlingStoneX;
+    float prevStoneY = curlingStoneY;
+    
+    while (curlingStoneMoving) {
+      animFrame++;
+      
+      // Erase stone at old position
+      int oldX = (int)prevStoneX;
+      int oldY = (int)prevStoneY;
+      for (int dy = -10; dy <= 10; dy++) {
+        uint16_t iceColor = getIceColorAt(tft, oldY + dy);
+        tft.drawFastHLine(oldX - 10, oldY + dy, 20, iceColor);
+      }
+      
+      // Erase ALL thrown stones at their old positions
+      for (int i = 0; i < numThrownStones; i++) {
+        if (thrownStones[i].active && (thrownStones[i].vx != 0 || thrownStones[i].vy != 0)) {
+          int stoneOldX = (int)thrownStones[i].x;
+          int stoneOldY = (int)thrownStones[i].y;
+          for (int dy = -10; dy <= 10; dy++) {
+            uint16_t iceColor = getIceColorAt(tft, stoneOldY + dy);
+            tft.drawFastHLine(stoneOldX - 10, stoneOldY + dy, 20, iceColor);
+          }
+        }
+      }
+      
+      if (brushers[0].active) eraseBrusher(tft, brushers[0].prevX, brushers[0].prevY);
+      if (brushers[1].active) eraseBrusher(tft, brushers[1].prevX, brushers[1].prevY);
+      
+      updateStonePhysics();
+      updateBrushers();
+      
+      if (curlingStoneY < brushers[0].y && !brusher0Done) {
+        brushers[0].active = false;
+        brusher0Done = true;
+      }
+      if (curlingStoneY < brushers[1].y && !brusher1Done) {
+        brushers[1].active = false;
+        brusher1Done = true;
+      }
+      
+      // Draw ALL thrown stones (including those sliding off)
+      for (int i = 0; i < numThrownStones; i++) {
+        if (thrownStones[i].active) {
+          drawStone(tft, (int)thrownStones[i].x, (int)thrownStones[i].y, thrownStones[i].team);
+        }
+      }
+      
+      if (brushers[0].active) drawBrusher(tft, brushers[0].x, brushers[0].y, currentTeam, animFrame);
+      if (brushers[1].active) drawBrusher(tft, brushers[1].x, brushers[1].y, currentTeam, animFrame);
+      
+      drawStone(tft, (int)curlingStoneX, (int)curlingStoneY, currentTeam);
+      
+      prevStoneX = curlingStoneX;
+      prevStoneY = curlingStoneY;
+      
+      updateAudio();
+      delay(50);
+    }
+    
+    if (numThrownStones < 6) {
+      thrownStones[numThrownStones].x = curlingStoneX;
+      thrownStones[numThrownStones].y = curlingStoneY;
+      thrownStones[numThrownStones].vx = 0;
+      thrownStones[numThrownStones].vy = 0;
+      thrownStones[numThrownStones].team = currentTeam;
+      thrownStones[numThrownStones].active = true;
+      numThrownStones++;
+    }
+    
+    delay(800);
+    throwCount++;
   }
   
-  // THROWING ANIMATION
-  bool brusher0Done = false;
-  bool brusher1Done = false;
   
-  while (curlingStoneMoving) {
-    sweepFrame++;
-    updateStonePhysics();
-    updateBrushers();
-    
-    drawPerspectiveRink(tft);
-    
-    // Check if stone passed brushers
-    if (curlingStoneY < brushers[0].y && !brusher0Done) {
-      brushers[0].active = false;
-      brusher0Done = true;
-    }
-    if (curlingStoneY < brushers[1].y && !brusher1Done) {
-      brushers[1].active = false;
-      brusher1Done = true;
-    }
-    
-    // Draw active brushers
-    if (brushers[0].active) drawBrusher(tft, brushers[0].x, brushers[0].y, 1, sweepFrame);
-    if (brushers[1].active) drawBrusher(tft, brushers[1].x, brushers[1].y, 1, sweepFrame);
-    
-    // Draw stone
-    drawStone(tft, (int)curlingStoneX, (int)curlingStoneY, 1);
-    
-    updateAudio();
-    delay(30);
-  }
-  
-  // Stone at rest - stays visible
-  delay(1000);
-  
-  // Calculate score
-  int finalScore = calculateScore();
+  // Calculate scores
+  int winner = calculateFinalScore();
   unsigned long finalTime = millis() - curlingStartTime;
   
   playSound("/sounds/crowd-cheer-and-applause.wav", true);
   
-  // Game over screen
+// Game over
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
   tft.setTextFont(4);
   tft.setTextDatum(MC_DATUM);
-  tft.drawString("GAME OVER!", SCREEN_W/2, 60);
+  tft.drawString("GAME OVER!", SCREEN_W/2, 30);  // Moved up
   
   tft.setTextFont(2);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextColor(TEAM_GREEN, TFT_BLACK);
   char buf[32];
-  snprintf(buf, sizeof(buf), "Score: %d", finalScore);
-  tft.drawString(buf, SCREEN_W/2, 100);
+  snprintf(buf, sizeof(buf), "Team 1 (Green): %d", team1Score);
+  tft.drawString(buf, SCREEN_W/2, 70);  // Moved up
+  
+  tft.setTextColor(TEAM_RED, TFT_BLACK);
+  snprintf(buf, sizeof(buf), "Team 2 (Red): %d", team2Score);
+  tft.drawString(buf, SCREEN_W/2, 90);  // Moved up
   
   snprintf(buf, sizeof(buf), "Time: %lu sec", finalTime / 1000);
-  tft.drawString(buf, SCREEN_W/2, 120);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString(buf, SCREEN_W/2, 110);  // Moved up
   
-  if (finalScore >= 75) {
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  // Draw gold medal for winner
+  if (winner == 1) {
+    drawGoldMedal(tft, SCREEN_W/2, 155);
     tft.setTextFont(4);
-    tft.drawString("EXCELLENT!", SCREEN_W/2, 160);
-  } else if (finalScore >= 50) {
-    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.setTextColor(TEAM_GREEN, TFT_BLACK);
+    tft.drawString("GREEN WINS!", SCREEN_W/2, 200);
+  } else if (winner == 2) {
+    drawGoldMedal(tft, SCREEN_W/2, 155);
     tft.setTextFont(4);
-    tft.drawString("GOOD SHOT!", SCREEN_W/2, 160);
-  } else if (finalScore >= 25) {
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.setTextFont(4);
-    tft.drawString("NICE TRY!", SCREEN_W/2, 160);
+    tft.setTextColor(TEAM_RED, TFT_BLACK);
+    tft.drawString("RED WINS!", SCREEN_W/2, 200);
   } else {
-    tft.setTextColor(TFT_RED, TFT_BLACK);
     tft.setTextFont(4);
-    tft.drawString("MISSED!", SCREEN_W/2, 160);
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.drawString("TIE GAME!", SCREEN_W/2, 155);
   }
   
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextFont(2);
-  tft.drawString("Press button to continue", SCREEN_W/2, 210);
+  tft.drawString("Press button to continue", SCREEN_W/2, 225);  // Moved down
   
   while (digitalRead(PIN_KO) == HIGH) {
     updateAudio();
