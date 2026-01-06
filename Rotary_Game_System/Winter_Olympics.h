@@ -8,6 +8,7 @@
 #include "Luge.h"  
 #include "Curling.h" 
 #include "Biathlon.h" 
+#include "Hockey.h"   
 
 #include "esp_task_wdt.h"
 
@@ -65,7 +66,8 @@ enum WO_GameMode {
     WO_GAME_SKI_JUMP,
     WO_GAME_LUGE,
     WO_GAME_CURLING,
-    WO_GAME_BIATHLON   
+    WO_GAME_BIATHLON,
+    WO_GAME_HOCKEY   
 };
 
 // Menu items - PUT IN PROGMEM
@@ -74,15 +76,17 @@ const char wo_menuTitle1[] PROGMEM = "Ski Jump";
 const char wo_menuTitle2[] PROGMEM = "Luge";
 const char wo_menuTitle3[] PROGMEM = "Curling";
 const char wo_menuTitle4[] PROGMEM = "Biathlon";
+const char wo_menuTitle5[] PROGMEM = "Ice Hockey"; 
 
 const char* const wo_gameMenuTitles[] PROGMEM = {
     wo_menuTitle0,
     wo_menuTitle1,
     wo_menuTitle2,
     wo_menuTitle3,
-    wo_menuTitle4
+    wo_menuTitle4,
+    wo_menuTitle5 
 };
-const int WO_NUM_OLYMPIC_GAMES = 5;
+const int WO_NUM_OLYMPIC_GAMES = 6;
 
 // Gate structure
 struct WO_Gate {
@@ -1086,6 +1090,13 @@ void ski_runBiathlon(TFT_eSPI &tft) {
 }
 
 //=============================================================================
+// ICE HOCKEY
+//=============================================================================
+void ski_runHockey(TFT_eSPI &tft) {
+    run_Hockey(tft);
+}
+
+//=============================================================================
 // MAIN ENTRY POINT
 //=============================================================================
 void run_Winter_Olympics(TFT_eSPI &tft) {
@@ -1162,6 +1173,12 @@ void run_Winter_Olympics(TFT_eSPI &tft) {
                 Serial.println("Starting Biathlon");
                 ski_runBiathlon(tft);
                 break;
+
+            case 5:  // Ice Hockey
+                Serial.println("Starting Ice Hockey");
+                ski_runHockey(tft);
+                break;
+
         }
         
         Serial.println("Game finished");

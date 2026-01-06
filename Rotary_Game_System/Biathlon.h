@@ -950,7 +950,7 @@ biathlon_skiDistance = 0.0f;
   }
   
   // Gold medal for good performance - EASIER CRITERIA!
-  if (biathlon_finalTime < 120000 && biathlon_missedShots <= 3) {  // CHANGED: 120 sec & 3 misses
+  if (biathlon_finalTime < 120000 && biathlon_missedShots <= 1) {  // CHANGED: 120 sec & 3 misses
     biathlon_drawGoldMedal(tft, SCREEN_W/2, 180);
   } else {
     tft.setTextColor(TFT_CYAN, TFT_BLACK);
