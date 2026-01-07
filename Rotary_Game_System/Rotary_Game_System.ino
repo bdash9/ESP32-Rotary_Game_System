@@ -4,6 +4,7 @@
 #include "AudioFileSourceSD.h"
 #include "AudioGeneratorWAV.h"
 #include "AudioOutputI2S.h"
+#include <TJpg_Decoder.h>
 
 // PAM8302A Pins
 //#define AMP_SD_PIN     32
@@ -33,6 +34,7 @@ void stopAudio();
 #include "Star_Wars_ascii.h"
 #include "Rhythm_Runner.h"
 #include "Winter_Olympics.h"
+#include "BenOS.h"
 
 TFT_eSPI tft = TFT_eSPI();
 
@@ -59,7 +61,8 @@ const char *game_titles[] = {
     "Captain Gordo", 
     "Star Wars: Ascii",
     "Rhythm Runner",
-    "Winter Olympics"
+    "Winter Olympics",
+    "BenOS" 
 };
 
 // ← MODIFY THIS ENUM
@@ -70,6 +73,7 @@ enum {
     STAR_WARS_ASCII_INDEX, 
     RHYTHM_RUNNER_INDEX,
     WINTER_OLYMPICS_INDEX,
+    BENOS_INDEX,
     NUM_GAMES 
 };
 
@@ -491,7 +495,8 @@ void loop() {
       case CAPTAIN_GORDO_INDEX: run_Captain_Gordo(tft); break;
       case STAR_WARS_ASCII_INDEX: run_StarWarsAscii(tft); break;
       case RHYTHM_RUNNER_INDEX: run_Rhythm_Runner(tft); break;
-      case WINTER_OLYMPICS_INDEX: run_Winter_Olympics(tft); break; 
+      case WINTER_OLYMPICS_INDEX: run_Winter_Olympics(tft); break;
+      case BENOS_INDEX: run_BenOS(tft); break; 
     }
     
     tft.init();
