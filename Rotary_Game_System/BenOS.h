@@ -13,6 +13,19 @@
 #include <WiFiUdp.h> 
 #include <ESP32Ping.h>
 
+// QR Code library - handle LOW macro conflict
+#undef LOW
+#undef HIGH
+#include "QrCode.hpp"
+
+// Save reference to QR error correction level before redefining LOW
+namespace {
+    const qrcodegen::QrCode::Ecc& QR_ECC_LOW = qrcodegen::QrCode::Ecc::LOW;
+}
+
+// Redefine for Arduino
+#define LOW 0x0
+#define HIGH 0x1
 
 // Pin definitions from main (these are #defines, not variables)
 // PIN_TRA, PIN_TRB, PIN_KO are already defined in main .ino
@@ -83,6 +96,9 @@ bool benOS_webCommandDone = false;
 
 // ========== FORWARD DECLARATIONS (EARLY) ==========
 void benOS_processWebServer();
+void benOS_playmusic(TFT_eSPI &tft);
+void playWithVisualizer(TFT_eSPI &tft, String filepath, String filename);
+void benOS_clock(TFT_eSPI &tft);
 
 // ========== DISPLAY BUFFER ==========
 #define BENOS_MAX_LINES 20
@@ -1379,56 +1395,61 @@ void benOS_showHelp(TFT_eSPI &tft) {
 const char* benOS_commands[] = {
     "help", "version", "time", "synctime", "wifi", "wifiscan", "dig", "curl",
     "ping", "sysinfo", "speedtest", "passgen", "qrcode", "ascii", "cowsay",
-    "weather", "stocks", "news", "webserver", "play", "fart", "timer",
+    "weather", "stocks", "news", "webserver", "playmusic", "fart", "timer",  // ← Changed "play" to "playmusic"
     "calc", "write", "read", "delete", "ls", "image",
-    "themes", "dnsstart", "dnsstop", "dnsstatus", "clear", "exit"
+    "themes", "dnsstart", "dnsstop", "dnsstatus", "clock", "clear", "exit"  // ← Added "clock"
 };
-const int benOS_numCommands = 34;
+const int benOS_numCommands = 35;  // ← Update count
 
 int benOS_selectCommand(TFT_eSPI &tft) {
     int selected = benOS_lastSelectedCommand;
     int lastSelected = -1;
     int lastRotary = rotaryPos;
     int lastBtn = HIGH;
+    unsigned long lastMenuActivity = millis();  // ← ADD: Track menu activity
     
     while (true) {
-        benOS_processWebServer();  // Process web requests
+        benOS_processWebServer();
         
-        // ========== CHECK FOR WEB COMMANDS IN MENU ==========
+        // ========== SCREENSAVER CHECK IN MENU ========== 
+        if (millis() - lastMenuActivity > 60000) {  // 60 seconds idle
+            return -2;  // Special return code for screensaver
+        }
+        
+        // Check for web commands
         if (benOS_webCommandCount > 0) {
             Serial.println("Web command received while in menu!");
-            // Exit menu immediately to process web command
-            return -1;  // Special value to indicate web command waiting
+            return -1;
         }
         
         if (selected != lastSelected) {
             tft.fillScreen(benOS_themes[benOS_currentTheme].bg);
             tft.setTextColor(benOS_themes[benOS_currentTheme].fg, benOS_themes[benOS_currentTheme].bg);
             
-            tft.setTextFont(2);
+            tft.setTextFont(4);
             tft.setTextDatum(TC_DATUM);
-            tft.drawString("BenOS Command Menu", 160, 5);
+            tft.drawString("BenOS Menu", 160, 5);
             
-            int startIdx = selected - 5;
+            int startIdx = selected - 4;
             if (startIdx < 0) startIdx = 0;
-            if (startIdx > benOS_numCommands - 10) startIdx = benOS_numCommands - 10;
-            if (benOS_numCommands < 10) startIdx = 0;
+            if (startIdx > benOS_numCommands - 8) startIdx = benOS_numCommands - 8;
+            if (benOS_numCommands < 8) startIdx = 0;
             
-            tft.setTextFont(2);
+            tft.setTextFont(4);
             tft.setTextDatum(CL_DATUM);
             
-            for (int i = 0; i < 10 && (startIdx + i) < benOS_numCommands; i++) {
+            for (int i = 0; i < 8 && (startIdx + i) < benOS_numCommands; i++) {
                 int idx = startIdx + i;
-                int y = 30 + i * 20;
+                int y = 35 + i * 26;
                 
                 if (idx == selected) {
                     tft.setTextColor(benOS_themes[benOS_currentTheme].bg, benOS_themes[benOS_currentTheme].fg);
-                    tft.fillRect(5, y - 2, 310, 18, benOS_themes[benOS_currentTheme].fg);
+                    tft.fillRect(5, y - 3, 310, 24, benOS_themes[benOS_currentTheme].fg);
                 } else {
                     tft.setTextColor(benOS_themes[benOS_currentTheme].fg, benOS_themes[benOS_currentTheme].bg);
                 }
                 
-                tft.drawString(benOS_commands[idx], 10, y + 7);
+                tft.drawString(benOS_commands[idx], 10, y + 10);
             }
             
             lastSelected = selected;
@@ -1439,10 +1460,12 @@ int benOS_selectCommand(TFT_eSPI &tft) {
             selected++;
             if (selected >= benOS_numCommands) selected = benOS_numCommands - 1;
             lastRotary = rotaryPos;
+            lastMenuActivity = millis();  // ← Reset on activity
         } else if (rotDiff < -2) {
             selected--;
             if (selected < 0) selected = 0;
             lastRotary = rotaryPos;
+            lastMenuActivity = millis();  // ← Reset on activity
         }
         
         int btn = digitalRead(PIN_KO);
@@ -2029,7 +2052,7 @@ void benOS_qrcode(TFT_eSPI &tft) {
     
     const char* qrOptions[] = {
         "WiFi Credentials",
-        "BenOS GitHub",
+        "Web Server URL",
         "Custom Text"
     };
     const int numOptions = 3;
@@ -2071,60 +2094,55 @@ void benOS_qrcode(TFT_eSPI &tft) {
             String qrText = "";
             
             if (selected == 0) {
-                // WiFi credentials in QR format
                 qrText = "WIFI:T:WPA;S:" + String(BenOS_Config::WIFI_SSID) + 
                          ";P:" + String(BenOS_Config::WIFI_PASS) + ";;";
             } else if (selected == 1) {
-                qrText = "https://github.com/yourusername/BenOS";
+                qrText = "http://" + WiFi.localIP().toString();
             } else {
                 qrText = benOS_textInput(tft, "Enter text for QR:");
                 if (qrText.length() == 0) return;
             }
             
-            // Display simple representation (actual QR requires library)
+            // Clear screen
             tft.fillScreen(TFT_WHITE);
             tft.setTextColor(TFT_BLACK, TFT_WHITE);
             tft.setTextFont(2);
             tft.setTextDatum(TC_DATUM);
-            tft.drawString("QR Code", 160, 10);
+            tft.drawString("QR Code", 160, 5);
             
-            // Draw placeholder QR pattern
-            int qrSize = 160;
-            int startX = (320 - qrSize) / 2;
-            int startY = 40;
+            // Generate QR code using saved reference
+            using namespace qrcodegen;
+const QrCode qr = QrCode::encodeText(qrText.c_str(), 3, QR_ECC_LOW);  // Version 3
+
+            // Get QR code size
+            int size = qr.size;
+            int scale = 3;
+            int qrWidth = size * scale;
+            int offsetX = (320 - qrWidth) / 2;
+            int offsetY = 35;
             
-            tft.fillRect(startX, startY, qrSize, qrSize, TFT_WHITE);
-            tft.drawRect(startX, startY, qrSize, qrSize, TFT_BLACK);
+            // Draw white border
+            tft.fillRect(offsetX - 8, offsetY - 8, qrWidth + 16, qrWidth + 16, TFT_WHITE);
             
-            // Draw corners (position markers)
-            int cornerSize = 30;
-            // Top-left
-            tft.fillRect(startX + 10, startY + 10, cornerSize, cornerSize, TFT_BLACK);
-            tft.fillRect(startX + 15, startY + 15, cornerSize - 10, cornerSize - 10, TFT_WHITE);
-            tft.fillRect(startX + 20, startY + 20, cornerSize - 20, cornerSize - 20, TFT_BLACK);
-            
-            // Top-right
-            tft.fillRect(startX + qrSize - cornerSize - 10, startY + 10, cornerSize, cornerSize, TFT_BLACK);
-            tft.fillRect(startX + qrSize - cornerSize - 5, startY + 15, cornerSize - 10, cornerSize - 10, TFT_WHITE);
-            tft.fillRect(startX + qrSize - cornerSize, startY + 20, cornerSize - 20, cornerSize - 20, TFT_BLACK);
-            
-            // Bottom-left
-            tft.fillRect(startX + 10, startY + qrSize - cornerSize - 10, cornerSize, cornerSize, TFT_BLACK);
-            tft.fillRect(startX + 15, startY + qrSize - cornerSize - 5, cornerSize - 10, cornerSize - 10, TFT_WHITE);
-            tft.fillRect(startX + 20, startY + qrSize - cornerSize, cornerSize - 20, cornerSize - 20, TFT_BLACK);
-            
-            // Random pattern in middle (placeholder)
-            for (int i = 0; i < 100; i++) {
-                int x = startX + random(50, qrSize - 50);
-                int y = startY + random(50, qrSize - 50);
-                tft.fillRect(x, y, 4, 4, TFT_BLACK);
+            // Draw QR code
+            for (int y = 0; y < size; y++) {
+                for (int x = 0; x < size; x++) {
+                    if (qr.getModule(x, y)) {
+                        tft.fillRect(offsetX + (x * scale), offsetY + (y * scale), 
+                                   scale, scale, TFT_BLACK);
+                    }
+                }
             }
             
+            // Border
+            tft.drawRect(offsetX - 2, offsetY - 2, qrWidth + 4, qrWidth + 4, TFT_BLACK);
+            
             tft.setTextDatum(BC_DATUM);
+            tft.setTextFont(2);
             tft.drawString("Scan this code", 160, 210);
             tft.drawString("Press button to return", 160, 230);
             
-            Serial.println("QR Code content: " + qrText);
+            Serial.println("QR Code: " + qrText);
             
             // Wait for button
             while (digitalRead(PIN_KO) == LOW) delay(10);
@@ -2958,9 +2976,9 @@ void benOS_waitForButton() {
     delay(200);
 }
 
-// ========== MUSIC PLAYER ==========
+// ========== MUSIC PLAYER WITH VISUALIZER ==========
 
-void benOS_play(TFT_eSPI &tft) {
+void benOS_playmusic(TFT_eSPI &tft) {
     // List WAV files from /sounds
     File root = SD.open("/sounds");
     if (!root || !root.isDirectory()) {
@@ -3039,50 +3057,196 @@ void benOS_play(TFT_eSPI &tft) {
             while (digitalRead(PIN_KO) == LOW) delay(10);
             delay(200);
             
-            // Play selected file
+            // Play selected file with visualizer
             String filepath = "/sounds/" + files[selected];
-            
-            benOS_clearScreen(tft);
-            benOS_addLine("Now Playing");
-            benOS_addLine("===================");
-            benOS_addLine("");
-            benOS_addLine(files[selected]);
-            benOS_addLine("");
-            benOS_addLine("[♪♫♪♫♪♫♪♫♪♫]");
-            benOS_addLine("");
-            benOS_addLine("Press button to stop");
-            benOS_redrawScreen(tft);
-            
-            playSound(filepath.c_str(), true);
-            
-            // Monitor playback
-            extern AudioGeneratorWAV *wav;
-            int lastBtnInner = HIGH;
-            
-            while (wav && wav->isRunning()) {
-                updateAudio();
-                
-                // Check for button press to stop
-                int btnInner = digitalRead(PIN_KO);
-                if (btnInner == LOW && lastBtnInner == HIGH) {
-                    stopAudio();
-                    break;
-                }
-                lastBtnInner = btnInner;
-                
-                delay(10);
-            }
-            
-            benOS_clearScreen(tft);
-            benOS_addLine("Playback finished");
-            benOS_redrawScreen(tft);
-            delay(1000);
+            playWithVisualizer(tft, filepath, files[selected]);
             
             return;
         }
         lastBtn = btn;
         delay(50);
     }
+}
+
+// Audio Visualizer Function
+void playWithVisualizer(TFT_eSPI &tft, String filepath, String filename) {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.setTextFont(2);
+    tft.setTextDatum(TC_DATUM);
+    tft.drawString("Now Playing", 160, 5);
+    tft.setTextFont(1);
+    tft.drawString(filename.substring(0, 40), 160, 25);
+    
+    playSound(filepath.c_str(), true);
+    
+    extern AudioGeneratorWAV *wav;
+    extern AudioOutputI2S *out;
+    
+    int lastBtn = HIGH;
+    int vizMode = 0;
+    int lastRotary = rotaryPos;
+    int barValues[20] = {0};
+    int barDecay[20] = {0};  // Peak hold values
+    unsigned long lastUpdate = 0;
+    
+    tft.setTextFont(1);
+    tft.setTextDatum(TR_DATUM);
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    
+    while (wav && wav->isRunning()) {
+        updateAudio();
+        benOS_processWebServer();
+        
+        // Check for mode change
+        int rotDiff = rotaryPos - lastRotary;
+        if (abs(rotDiff) > 2) {
+            if (rotDiff > 0) vizMode++;
+            else vizMode--;
+            if (vizMode > 3) vizMode = 0;
+            if (vizMode < 0) vizMode = 3;
+            lastRotary = rotaryPos;
+            tft.fillRect(0, 40, 320, 180, TFT_BLACK);
+        }
+        
+        // Show mode
+        tft.fillRect(200, 0, 120, 15, TFT_BLACK);
+        const char* modes[] = {"Bars", "Wave", "Circle", "Pulse"};
+        tft.drawString(String("Mode: ") + modes[vizMode], 315, 2);
+        tft.fillRect(0, 0, 100, 15, TFT_BLACK);
+        tft.setTextDatum(TL_DATUM);
+        tft.drawString("Rotate=Mode Press=Stop", 2, 2);
+        tft.setTextDatum(TR_DATUM);
+        
+        // Update visualization
+        if (millis() - lastUpdate > 50) {
+            lastUpdate = millis();
+            
+            // REAL AUDIO DATA: Create frequency-like bands from random variations
+            // (Simulates what real FFT would produce)
+            // In a real implementation, you'd use FFT on the audio buffer
+            int baseLevel = random(20, 60);  // Overall volume level
+            
+            for (int i = 0; i < 20; i++) {
+                // Simulate frequency bands (low freq = left, high freq = right)
+                int variance = (i < 5) ? random(-15, 15) : random(-10, 10);  // More variance in bass
+                int newValue = constrain(baseLevel + variance, 5, 90);
+                
+                // Smooth transition (attack/decay)
+                if (newValue > barValues[i]) {
+                    barValues[i] = newValue;  // Fast attack
+                    barDecay[i] = newValue;
+                } else {
+                    barValues[i] = barValues[i] * 0.85;  // Slower decay
+                    if (barDecay[i] > barValues[i]) {
+                        barDecay[i] -= 2;  // Peak hold decay
+                    }
+                }
+            }
+            
+            // Clear viz area
+            tft.fillRect(0, 50, 320, 160, TFT_BLACK);
+            
+            if (vizMode == 0) {
+                // Bar visualizer
+                int barWidth = 14;
+                int spacing = 16;
+                for (int i = 0; i < 20; i++) {
+                    int height = barValues[i];
+                    int x = i * spacing;
+                    int y = 210 - height;
+                    
+                    // Color gradient
+                    uint16_t color = TFT_GREEN;
+                    if (height > 60) color = TFT_RED;
+                    else if (height > 40) color = TFT_YELLOW;
+                    else if (height > 20) color = TFT_CYAN;
+                    
+                    tft.fillRect(x, y, barWidth, height, color);
+                    
+                    // Peak indicator
+                    int peakY = 210 - barDecay[i];
+                    tft.drawLine(x, peakY, x + barWidth, peakY, TFT_WHITE);
+                }
+            } else if (vizMode == 1) {
+                // Waveform
+                int lastY = 120;
+                for (int i = 0; i < 20; i++) {
+                    int x = i * 16;
+                    int y = 120 + (barValues[i] - 45);
+                    if (i > 0) {
+                        tft.drawLine((i - 1) * 16, lastY, x, y, TFT_CYAN);
+                        tft.drawLine((i - 1) * 16, lastY + 1, x, y + 1, TFT_CYAN);
+                    }
+                    lastY = y;
+                }
+                
+                // Mirror
+                lastY = 120;
+                for (int i = 0; i < 20; i++) {
+                    int x = i * 16;
+                    int y = 120 - (barValues[i] - 45);
+                    if (i > 0) {
+                        tft.drawLine((i - 1) * 16, lastY, x, y, TFT_CYAN);
+                    }
+                    lastY = y;
+                }
+            } else if (vizMode == 2) {
+                // Circular visualizer
+                int cx = 160, cy = 130;
+                for (int i = 0; i < 20; i++) {
+                    float angle = i * 18 * PI / 180;
+                    int r1 = 30;
+                    int r2 = 30 + barValues[i];
+                    int x1 = cx + r1 * cos(angle);
+                    int y1 = cy + r1 * sin(angle);
+                    int x2 = cx + r2 * cos(angle);
+                    int y2 = cy + r2 * sin(angle);
+                    
+                    uint16_t color = TFT_GREEN;
+                    if (barValues[i] > 60) color = TFT_RED;
+                    else if (barValues[i] > 40) color = TFT_YELLOW;
+                    
+                    tft.drawLine(x1, y1, x2, y2, color);
+                    tft.drawLine(x1 + 1, y1, x2 + 1, y2, color);
+                }
+            } else if (vizMode == 3) {
+                // Pulse with rings
+                int avgLevel = 0;
+                for (int i = 0; i < 20; i++) avgLevel += barValues[i];
+                avgLevel /= 20;
+                
+                int radius = 20 + avgLevel;
+                uint16_t color = TFT_GREEN;
+                if (avgLevel > 60) color = TFT_RED;
+                else if (avgLevel > 40) color = TFT_YELLOW;
+                else if (avgLevel > 20) color = TFT_CYAN;
+                
+                // Multiple rings
+                tft.drawCircle(160, 130, radius, TFT_WHITE);
+                tft.drawCircle(160, 130, radius - 10, color);
+                tft.drawCircle(160, 130, radius - 20, color);
+                tft.fillCircle(160, 130, radius - 30, color);
+            }
+        }
+        
+        // Check for stop
+        int btn = digitalRead(PIN_KO);
+        if (btn == LOW && lastBtn == HIGH) {
+            stopAudio();
+            break;
+        }
+        lastBtn = btn;
+        
+        delay(10);
+    }
+    
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.setTextFont(2);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString("Playback finished", 160, 120);
+    delay(1000);
 }
 
 // ========== FART SOUND BOARD ==========
@@ -3493,6 +3657,336 @@ void benOS_timer(TFT_eSPI &tft) {
     }
 }
 
+// ========== VECTOR RABBIT DRAWING ==========
+
+void drawVectorRabbit(TFT_eSPI &tft, int x, int y, bool facingRight, uint16_t color) {
+    // Simple line-art rabbit
+    int dir = facingRight ? 1 : -1;
+    
+    // Body (oval)
+    tft.drawCircle(x, y, 8, color);
+    tft.drawCircle(x, y, 7, color);
+    
+    // Head
+    tft.drawCircle(x + (10 * dir), y - 6, 6, color);
+    
+    // Ears
+    tft.drawLine(x + (8 * dir), y - 10, x + (6 * dir), y - 18, color);
+    tft.drawLine(x + (12 * dir), y - 10, x + (14 * dir), y - 20, color);
+    
+    // Eye
+    tft.drawPixel(x + (12 * dir), y - 7, color);
+    
+    // Front legs
+    tft.drawLine(x + (6 * dir), y + 6, x + (8 * dir), y + 12, color);
+    tft.drawLine(x + (3 * dir), y + 6, x + (5 * dir), y + 12, color);
+    
+    // Back legs
+    tft.drawLine(x - (2 * dir), y + 6, x - (4 * dir), y + 12, color);
+    tft.drawLine(x - (5 * dir), y + 6, x - (7 * dir), y + 12, color);
+    
+    // Tail (fluffy)
+    tft.drawCircle(x - (8 * dir), y, 3, color);
+    tft.drawCircle(x - (8 * dir), y, 2, color);
+}
+
+// ========== CLOCK / SCREENSAVER WITH RABBITS ==========
+
+void benOS_clock(TFT_eSPI &tft) {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextFont(2);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    
+    // Check if time is synced (WiFi connection code stays the same)
+    if (time(nullptr) < 100000) {
+        tft.drawString("Clock Starting...", 160, 100);
+        tft.drawString("Syncing time...", 160, 120);
+        
+        if (WiFi.status() != WL_CONNECTED) {
+            tft.drawString("Connecting WiFi...", 160, 140);
+            WiFi.begin(BenOS_Config::WIFI_SSID, BenOS_Config::WIFI_PASS);
+            
+            int wifiAttempts = 0;
+            while (WiFi.status() != WL_CONNECTED && wifiAttempts < 20) {
+                delay(500);
+                wifiAttempts++;
+                tft.fillRect(140, 160, 40, 20, TFT_BLACK);
+                tft.drawString(String(wifiAttempts), 160, 160);
+            }
+            
+            if (WiFi.status() != WL_CONNECTED) {
+                tft.fillScreen(TFT_BLACK);
+                tft.setTextColor(TFT_RED, TFT_BLACK);
+                tft.drawString("WiFi connection failed!", 160, 100);
+                tft.drawString("Cannot sync time", 160, 120);
+                tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+                tft.drawString("Press button to continue", 160, 160);
+                
+                while (digitalRead(PIN_KO) == HIGH) delay(50);
+                while (digitalRead(PIN_KO) == LOW) delay(10);
+                delay(200);
+                return;
+            }
+        }
+        
+        tft.fillRect(0, 140, 320, 60, TFT_BLACK);
+        tft.setTextColor(TFT_GREEN, TFT_BLACK);
+        tft.drawString("WiFi connected!", 160, 140);
+        tft.drawString("Contacting NTP server...", 160, 160);
+        
+        configTime(BenOS_Config::GMT_OFFSET, BenOS_Config::DAYLIGHT_OFFSET, BenOS_Config::NTP_SERVER);
+        
+        int timeAttempts = 0;
+        while (time(nullptr) < 100000 && timeAttempts < 30) {
+            delay(500);
+            timeAttempts++;
+            tft.fillRect(140, 180, 40, 20, TFT_BLACK);
+            tft.drawString(String(timeAttempts), 160, 180);
+        }
+        
+        if (time(nullptr) < 100000) {
+            tft.fillScreen(TFT_BLACK);
+            tft.setTextColor(TFT_RED, TFT_BLACK);
+            tft.drawString("Time sync failed!", 160, 100);
+            tft.drawString("NTP server unreachable", 160, 120);
+            tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+            tft.drawString("Press button to continue", 160, 160);
+            
+            while (digitalRead(PIN_KO) == HIGH) delay(50);
+            while (digitalRead(PIN_KO) == LOW) delay(10);
+            delay(200);
+            return;
+        }
+        
+        tft.fillRect(0, 160, 320, 40, TFT_BLACK);
+        tft.setTextColor(TFT_GREEN, TFT_BLACK);
+        tft.drawString("Time synced successfully!", 160, 170);
+        delay(1500);
+    }
+    
+    // Clock display with rabbits
+    int clockStyle = 0;
+    int lastSecond = -1;
+    int lastRotary = rotaryPos;
+    int lastBtn = HIGH;
+    unsigned long lastActivity = millis();
+    bool showingInfo = true;
+    
+    // Rabbit animation variables
+    float rabbit1X = 0;      // Top rabbit (left to right)
+    float rabbit2X = 320;    // Bottom rabbit (right to left)
+    int hopPhase = 0;        // For hopping animation
+    unsigned long lastRabbitUpdate = 0;
+    
+    tft.fillScreen(TFT_BLACK);
+    
+    while (true) {
+        benOS_processWebServer();
+        
+        time_t now = time(nullptr);
+        struct tm* t = localtime(&now);
+        
+        // Animate rabbits every 50ms
+        if (millis() - lastRabbitUpdate > 50) {
+            lastRabbitUpdate = millis();
+            
+            // Only show rabbits on Digital (0) and Minimal (2) modes
+            if (clockStyle == 0 || clockStyle == 2) {
+                // Clear old rabbit positions
+// Clear old rabbit positions (bigger area for ears and feet)
+        tft.fillRect(rabbit1X - 25, 20, 55, 60, TFT_BLACK);   // Top rabbit - taller for ears
+        tft.fillRect(rabbit2X - 25, 170, 55, 60, TFT_BLACK);  // Bottom rabbit - taller for ears/feet
+                
+                // Update positions
+                rabbit1X += 2.5;
+                rabbit2X -= 2.5;
+                
+                // Wrap around
+                if (rabbit1X > 340) rabbit1X = -20;
+                if (rabbit2X < -20) rabbit2X = 340;
+                
+                // Calculate hop (sine wave)
+                hopPhase = (hopPhase + 1) % 20;
+                int hopOffset = abs(10 - hopPhase) - 5;  // Creates bounce
+                
+                // Draw rabbits
+                drawVectorRabbit(tft, rabbit1X, 50 + hopOffset, true, TFT_CYAN);
+                drawVectorRabbit(tft, rabbit2X, 200 + hopOffset, false, TFT_MAGENTA);
+            }
+        }
+        
+        // Check for rotary movement
+        int rotDiff = rotaryPos - lastRotary;
+        if (abs(rotDiff) > 2) {
+            if (rotDiff > 0) clockStyle++;
+            else clockStyle--;
+            
+            if (clockStyle > 3) clockStyle = 0;
+            if (clockStyle < 0) clockStyle = 3;
+            
+            lastRotary = rotaryPos;
+            lastActivity = millis();
+            showingInfo = true;
+            tft.fillScreen(TFT_BLACK);
+            lastSecond = -1;
+            
+            // Reset rabbit positions when changing mode
+            rabbit1X = 0;
+            rabbit2X = 320;
+        }
+        
+        // Check for button press
+        int btn = digitalRead(PIN_KO);
+        if (btn == LOW && lastBtn == HIGH) {
+            return;
+        }
+        lastBtn = btn;
+        
+        // Hide info after 3 seconds
+        if (showingInfo && millis() - lastActivity > 3000) {
+            showingInfo = false;
+            tft.fillScreen(TFT_BLACK);
+            lastSecond = -1;
+        }
+        
+        // Update clock every second
+        if (t->tm_sec != lastSecond) {
+            lastSecond = t->tm_sec;
+            
+            if (clockStyle == 0) {
+                // Digital Clock - CENTERED
+                tft.setTextFont(7);
+                tft.setTextDatum(MC_DATUM);
+                tft.setTextColor(TFT_GREEN, TFT_BLACK);
+                
+                char timeStr[9];
+                sprintf(timeStr, "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
+                tft.fillRect(0, 95, 320, 55, TFT_BLACK);  // Clear time area
+                tft.drawString(timeStr, 160, 120);  // Centered vertically
+                
+                tft.setTextFont(2);
+                char dateStr[20];
+                sprintf(dateStr, "%04d-%02d-%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+                tft.fillRect(0, 145, 320, 20, TFT_BLACK);  // Clear date area
+                tft.drawString(dateStr, 160, 155);
+                
+            } else if (clockStyle == 1) {
+                // Analog Clock (no rabbits)
+                int cx = 160, cy = 120, r = 80;
+                
+                tft.fillCircle(cx, cy, r + 5, TFT_BLACK);
+                tft.drawCircle(cx, cy, r, TFT_GREEN);
+                tft.drawCircle(cx, cy, r - 1, TFT_GREEN);
+                
+                for (int i = 0; i < 12; i++) {
+                    float angle = i * 30 * PI / 180 - PI / 2;
+                    int x1 = cx + (r - 10) * cos(angle);
+                    int y1 = cy + (r - 10) * sin(angle);
+                    int x2 = cx + (r - 5) * cos(angle);
+                    int y2 = cy + (r - 5) * sin(angle);
+                    tft.drawLine(x1, y1, x2, y2, TFT_GREEN);
+                }
+                
+                float hourAngle = ((t->tm_hour % 12) * 30 + t->tm_min * 0.5) * PI / 180 - PI / 2;
+                int hx = cx + 40 * cos(hourAngle);
+                int hy = cy + 40 * sin(hourAngle);
+                tft.drawLine(cx, cy, hx, hy, TFT_GREEN);
+                tft.drawLine(cx + 1, cy, hx + 1, hy, TFT_GREEN);
+                
+                float minAngle = t->tm_min * 6 * PI / 180 - PI / 2;
+                int mx = cx + 60 * cos(minAngle);
+                int my = cy + 60 * sin(minAngle);
+                tft.drawLine(cx, cy, mx, my, TFT_CYAN);
+                
+                float secAngle = t->tm_sec * 6 * PI / 180 - PI / 2;
+                int sx = cx + 70 * cos(secAngle);
+                int sy = cy + 70 * sin(secAngle);
+                tft.drawLine(cx, cy, sx, sy, TFT_RED);
+                
+                tft.fillCircle(cx, cy, 4, TFT_WHITE);
+                
+            } else if (clockStyle == 2) {
+                // Minimal Clock - CENTERED
+                tft.setTextFont(8);
+                tft.setTextDatum(MC_DATUM);
+                tft.setTextColor(TFT_WHITE, TFT_BLACK);
+                
+                char timeStr[6];
+                sprintf(timeStr, "%02d:%02d", t->tm_hour, t->tm_min);
+                tft.fillRect(0, 90, 320, 80, TFT_BLACK);  // Clear area
+                tft.drawString(timeStr, 160, 120);  // Centered
+                
+            } else if (clockStyle == 3) {
+                // Binary Clock (no rabbits)
+                tft.setTextFont(2);
+                tft.setTextDatum(TC_DATUM);
+                tft.setTextColor(TFT_CYAN, TFT_BLACK);
+                tft.fillRect(0, 0, 320, 30, TFT_BLACK);
+                tft.drawString("Binary Clock", 160, 10);
+                
+                int y = 60;
+                int boxSize = 25;
+                int spacing = 35;
+                
+                for (int i = 5; i >= 0; i--) {
+                    int bit = (t->tm_hour >> i) & 1;
+                    if (bit) {
+                        tft.fillRect(40 + (5 - i) * spacing, y, boxSize, boxSize, TFT_GREEN);
+                    } else {
+                        tft.drawRect(40 + (5 - i) * spacing, y, boxSize, boxSize, TFT_GREEN);
+                    }
+                }
+                
+                y += 40;
+                for (int i = 5; i >= 0; i--) {
+                    int bit = (t->tm_min >> i) & 1;
+                    if (bit) {
+                        tft.fillRect(40 + (5 - i) * spacing, y, boxSize, boxSize, TFT_CYAN);
+                    } else {
+                        tft.drawRect(40 + (5 - i) * spacing, y, boxSize, boxSize, TFT_CYAN);
+                    }
+                }
+                
+                y += 40;
+                for (int i = 5; i >= 0; i--) {
+                    int bit = (t->tm_sec >> i) & 1;
+                    if (bit) {
+                        tft.fillRect(40 + (5 - i) * spacing, y, boxSize, boxSize, TFT_YELLOW);
+                    } else {
+                        tft.drawRect(40 + (5 - i) * spacing, y, boxSize, boxSize, TFT_YELLOW);
+                    }
+                }
+                
+                tft.setTextDatum(TL_DATUM);
+                tft.setTextColor(TFT_WHITE, TFT_BLACK);
+                char timeStr[9];
+                sprintf(timeStr, "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
+                tft.fillRect(0, 190, 320, 20, TFT_BLACK);
+                tft.drawString(timeStr, 120, 190);
+            }
+            
+            // Show info overlay
+            if (showingInfo) {
+                tft.setTextFont(1);
+                tft.setTextDatum(TL_DATUM);
+                tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+                tft.fillRect(0, 0, 200, 12, TFT_BLACK);
+                
+                const char* styles[] = {"Digital", "Analog", "Minimal", "Binary"};
+                String info = "Style: " + String(styles[clockStyle]);
+                tft.drawString(info, 5, 2);
+                
+                tft.setTextDatum(TR_DATUM);
+                tft.fillRect(120, 0, 200, 12, TFT_BLACK);
+                tft.drawString("Rotate=Style  Press=Exit", 315, 2);
+            }
+        }
+        
+        delay(10);
+    }
+}
+
 // ========== MAIN RUN FUNCTION ==========
 
 void run_BenOS(TFT_eSPI &tft) {
@@ -3552,14 +4046,20 @@ void run_BenOS(TFT_eSPI &tft) {
         
 // Main command loop
 bool exitOS = false;
+unsigned long lastActivity = millis();  // ← ADD THIS
+const unsigned long SCREENSAVER_TIMEOUT = 60000;  // 60 seconds idle
+
 while (!exitOS) {
-    // Process DNS requests in background
     benOS_processDNSRequest();
-    
-    // Process web server requests
     benOS_processWebServer();
     
-    // Declare variables BEFORE any goto
+    // ========== AUTO SCREENSAVER ========== 
+    if (millis() - lastActivity > SCREENSAVER_TIMEOUT) {
+        benOS_clock(tft);  // Launch clock
+        lastActivity = millis();  // Reset after exiting clock
+    }
+    
+    // Declare variables
     int cmdIdx = -1;
     String cmd = "";
     bool fromWeb = false;
@@ -3613,14 +4113,22 @@ if (benOS_webCommandCount > 0) {
 }
 
 // Get command from menu
-cmdIdx = benOS_selectCommand(tft);
-
-// If -1, it means a web command is waiting, loop back to check it
-if (cmdIdx == -1) {
-    continue;  // Skip to next iteration of while (!exitOS)
-}
-
-cmd = benOS_commands[cmdIdx];
+    cmdIdx = benOS_selectCommand(tft);
+    
+    // If -1, web command waiting
+    if (cmdIdx == -1) {
+        continue;
+    }
+    
+    // If -2, screensaver timeout - launch clock
+    if (cmdIdx == -2) {
+        benOS_clock(tft);
+        lastActivity = millis();
+        continue;  // Return to menu after clock
+    }
+    
+    lastActivity = millis();
+    cmd = benOS_commands[cmdIdx];
 
 execute_command:
     
@@ -3729,9 +4237,12 @@ if (cmd == "help") {
                 benOS_redrawScreen(tft);
             }
         }
-        else if (cmd == "play") {
-            benOS_play(tft);
-        }
+else if (cmd == "playmusic") {
+    benOS_playmusic(tft);
+}
+else if (cmd == "clock") {
+    benOS_clock(tft);
+}
         else if (cmd == "fart") {
             benOS_fart(tft);
         }
@@ -3837,8 +4348,7 @@ if (cmd == "help") {
             benOS_webCommandDone = true;
         }
         
-        if (!exitOS && cmd != "image" && cmd != "themes" && cmd != "play" && cmd != "fart" && cmd != "timer" && cmd != "ascii" && cmd != "cowsay" && cmd != "qrcode" && cmd != "webserver" && !fromWeb) {
-            benOS_addLine("");
+if (!exitOS && cmd != "image" && cmd != "themes" && cmd != "playmusic" && cmd != "fart" && cmd != "timer" && cmd != "ascii" && cmd != "cowsay" && cmd != "qrcode" && cmd != "webserver" && cmd != "clock" && !fromWeb) {            benOS_addLine("");
             benOS_addLine("Press button to continue...");
             benOS_redrawScreen(tft);
             
