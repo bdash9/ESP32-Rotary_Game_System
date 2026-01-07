@@ -3730,26 +3730,65 @@ void benOS_clock(TFT_eSPI &tft) {
             }
         }
         
-        tft.fillRect(0, 140, 320, 60, TFT_BLACK);
+tft.fillRect(0, 140, 320, 60, TFT_BLACK);
         tft.setTextColor(TFT_GREEN, TFT_BLACK);
         tft.drawString("WiFi connected!", 160, 140);
-        tft.drawString("Contacting NTP server...", 160, 160);
         
-        configTime(BenOS_Config::GMT_OFFSET, BenOS_Config::DAYLIGHT_OFFSET, BenOS_Config::NTP_SERVER);
+        // Wait for network to fully settle
+        tft.drawString("Network settling...", 160, 160);
+        delay(2000);  // Give network time to stabilize
         
-        int timeAttempts = 0;
-        while (time(nullptr) < 100000 && timeAttempts < 30) {
-            delay(500);
-            timeAttempts++;
-            tft.fillRect(140, 180, 40, 20, TFT_BLACK);
-            tft.drawString(String(timeAttempts), 160, 180);
+        tft.fillRect(0, 160, 320, 40, TFT_BLACK);
+        tft.drawString("Contacting NTP servers...", 160, 160);
+        
+        // Try multiple NTP servers for reliability
+        const char* ntpServers[] = {
+            "pool.ntp.org",
+            "time.nist.gov",
+            "time.google.com"
+        };
+        
+        bool timeSynced = false;
+        for (int serverIdx = 0; serverIdx < 3 && !timeSynced; serverIdx++) {
+            if (serverIdx > 0) {
+                tft.fillRect(0, 160, 320, 20, TFT_BLACK);
+                tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+                tft.drawString("Trying alternate server...", 160, 160);
+                delay(1000);
+            }
+            
+            // Configure time with current server
+            configTime(BenOS_Config::GMT_OFFSET, BenOS_Config::DAYLIGHT_OFFSET, ntpServers[serverIdx]);
+            
+            // Show which server we're trying
+            tft.fillRect(0, 180, 320, 20, TFT_BLACK);
+            tft.setTextColor(TFT_CYAN, TFT_BLACK);
+            tft.drawString(String(ntpServers[serverIdx]), 160, 180);
+            
+            // Wait for sync (up to 20 seconds per server)
+            int timeAttempts = 0;
+            while (time(nullptr) < 100000 && timeAttempts < 40) {
+                delay(500);
+                timeAttempts++;
+                
+                // Show progress
+                tft.fillRect(140, 200, 40, 20, TFT_BLACK);
+                tft.drawString(String(timeAttempts), 160, 200);
+                
+                // Check if synced
+                if (time(nullptr) >= 100000) {
+                    timeSynced = true;
+                    break;
+                }
+            }
         }
         
-        if (time(nullptr) < 100000) {
+if (!timeSynced) {
+            // All servers failed
             tft.fillScreen(TFT_BLACK);
             tft.setTextColor(TFT_RED, TFT_BLACK);
             tft.drawString("Time sync failed!", 160, 100);
-            tft.drawString("NTP server unreachable", 160, 120);
+            tft.drawString("All NTP servers timeout", 160, 120);
             tft.setTextColor(TFT_YELLOW, TFT_BLACK);
             tft.drawString("Press button to continue", 160, 160);
             
@@ -3759,11 +3798,12 @@ void benOS_clock(TFT_eSPI &tft) {
             return;
         }
         
+        // Success!
         tft.fillRect(0, 160, 320, 40, TFT_BLACK);
         tft.setTextColor(TFT_GREEN, TFT_BLACK);
         tft.drawString("Time synced successfully!", 160, 170);
         delay(1500);
-    }
+    }  // ← This closes the main if (time(nullptr) < 100000) check
     
     // Clock display with rabbits
     int clockStyle = 0;
