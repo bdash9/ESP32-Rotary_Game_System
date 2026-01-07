@@ -5,12 +5,14 @@
 #include <TFT_eSPI.h>
 #include <SD.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <time.h>
 #include <TJpg_Decoder.h>
 //#include <DNSServer.h>  
 #include <WiFiUdp.h> 
 #include <ESP32Ping.h>
+
 
 // Pin definitions from main (these are #defines, not variables)
 // PIN_TRA, PIN_TRB, PIN_KO are already defined in main .ino
@@ -66,6 +68,21 @@ BenOS_Theme benOS_themes[] = {
 
 int benOS_currentTheme = 0;
 const int benOS_themeCount = sizeof(benOS_themes) / sizeof(BenOS_Theme);
+
+// ========== COMMAND MENU MEMORY ==========
+int benOS_lastSelectedCommand = 0;
+
+// ========== WEB COMMAND QUEUE ==========
+#define MAX_WEB_COMMANDS 5
+String benOS_webCommandQueue[MAX_WEB_COMMANDS];
+int benOS_webCommandCount = 0;
+
+// ========== WEB OUTPUT BUFFER ==========
+String benOS_webCommandOutput = "";
+bool benOS_webCommandDone = false;
+
+// ========== FORWARD DECLARATIONS (EARLY) ==========
+void benOS_processWebServer();
 
 // ========== DISPLAY BUFFER ==========
 #define BENOS_MAX_LINES 20
@@ -1369,12 +1386,21 @@ const char* benOS_commands[] = {
 const int benOS_numCommands = 34;
 
 int benOS_selectCommand(TFT_eSPI &tft) {
-    int selected = 0;
+    int selected = benOS_lastSelectedCommand;
     int lastSelected = -1;
     int lastRotary = rotaryPos;
     int lastBtn = HIGH;
     
     while (true) {
+        benOS_processWebServer();  // Process web requests
+        
+        // ========== CHECK FOR WEB COMMANDS IN MENU ==========
+        if (benOS_webCommandCount > 0) {
+            Serial.println("Web command received while in menu!");
+            // Exit menu immediately to process web command
+            return -1;  // Special value to indicate web command waiting
+        }
+        
         if (selected != lastSelected) {
             tft.fillScreen(benOS_themes[benOS_currentTheme].bg);
             tft.setTextColor(benOS_themes[benOS_currentTheme].fg, benOS_themes[benOS_currentTheme].bg);
@@ -1423,6 +1449,7 @@ int benOS_selectCommand(TFT_eSPI &tft) {
         if (btn == LOW && lastBtn == HIGH) {
             while (digitalRead(PIN_KO) == LOW) delay(10);
             delay(200);
+            benOS_lastSelectedCommand = selected;
             return selected;
         }
         lastBtn = btn;
@@ -2284,9 +2311,9 @@ void benOS_weather(TFT_eSPI &tft) {
     benOS_addLine("Fetching...");
     benOS_redrawScreen(tft);
     
-    // Using wttr.in simple weather API
+    // Newton Highlands, MA coordinates: 42.3370, -71.2092
     HTTPClient http;
-    http.begin("http://wttr.in/Newton+Highlands+MA?format=%l:+%C+%t+%h+%w");
+    http.begin("http://api.open-meteo.com/v1/forecast?latitude=42.337&longitude=-71.209&current_weather=true&temperature_unit=fahrenheit&windspeed_unit=mph");
     http.setTimeout(10000);
     
     int code = http.GET();
@@ -2298,43 +2325,75 @@ void benOS_weather(TFT_eSPI &tft) {
     benOS_addLine("");
     
     if (code == HTTP_CODE_OK) {
-        String weather = http.getString();
-        weather.trim();
+        String json = http.getString();
         
-        // Parse and display
-        benOS_addLineWrapped(weather);
+        Serial.println("Weather JSON response:");
+        Serial.println(json);  // Debug output
         
-        // Get more detailed info
-        http.end();
-        http.begin("http://wttr.in/Newton+Highlands+MA?format=j1");
-        code = http.GET();
-        
-        if (code == HTTP_CODE_OK) {
-            String json = http.getString();
+        // Find current_weather object
+        int currentWeatherIdx = json.indexOf("\"current_weather\":");
+        if (currentWeatherIdx > 0) {
+            String weatherData = json.substring(currentWeatherIdx);
             
-            // Simple parsing for current temp
-            int tempIdx = json.indexOf("\"temp_F\":");
+            // Parse temperature (comes after "temperature":)
+            int tempIdx = weatherData.indexOf("\"temperature\":");
             if (tempIdx > 0) {
-                String temp = json.substring(tempIdx + 10, tempIdx + 15);
+                int tempStart = tempIdx + 14;
+                int tempEnd = weatherData.indexOf(',', tempStart);
+                if (tempEnd < 0) tempEnd = weatherData.indexOf('}', tempStart);
+                String temp = weatherData.substring(tempStart, tempEnd);
                 temp.trim();
-                int commaIdx = temp.indexOf(',');
-                if (commaIdx > 0) temp = temp.substring(0, commaIdx);
-                temp.replace("\"", "");
-                benOS_addLine("");
                 benOS_addLine("Temperature: " + temp + " F");
             }
             
-            // Humidity
-            int humidIdx = json.indexOf("\"humidity\":");
-            if (humidIdx > 0) {
-                String humid = json.substring(humidIdx + 12, humidIdx + 17);
-                humid.trim();
-                int commaIdx = humid.indexOf(',');
-                if (commaIdx > 0) humid = humid.substring(0, commaIdx);
-                humid.replace("\"", "");
-                benOS_addLine("Humidity: " + humid + "%");
+            // Parse windspeed
+            int windIdx = weatherData.indexOf("\"windspeed\":");
+            if (windIdx > 0) {
+                int windStart = windIdx + 12;
+                int windEnd = weatherData.indexOf(',', windStart);
+                if (windEnd < 0) windEnd = weatherData.indexOf('}', windStart);
+                String wind = weatherData.substring(windStart, windEnd);
+                wind.trim();
+                benOS_addLine("Wind: " + wind + " mph");
             }
+            
+            // Parse weather code
+            int codeIdx = weatherData.indexOf("\"weathercode\":");
+            if (codeIdx > 0) {
+                int codeStart = codeIdx + 14;
+                int codeEnd = weatherData.indexOf(',', codeStart);
+                if (codeEnd < 0) codeEnd = weatherData.indexOf('}', codeStart);
+                String codeStr = weatherData.substring(codeStart, codeEnd);
+                codeStr.trim();
+                
+                int weatherCode = codeStr.toInt();
+                String condition = "Unknown";
+                
+                if (weatherCode == 0) condition = "Clear sky";
+                else if (weatherCode <= 3) condition = "Partly cloudy";
+                else if (weatherCode <= 48) condition = "Fog";
+                else if (weatherCode <= 67) condition = "Rainy";
+                else if (weatherCode <= 77) condition = "Snowy";
+                else if (weatherCode <= 82) condition = "Rain showers";
+                else if (weatherCode <= 86) condition = "Snow showers";
+                else condition = "Thunderstorm";
+                
+                benOS_addLine("Conditions: " + condition);
+            }
+            
+            // Parse time
+            int timeIdx = weatherData.indexOf("\"time\":\"");
+            if (timeIdx > 0) {
+                int timeStart = timeIdx + 8;
+                int timeEnd = weatherData.indexOf("\"", timeStart);
+                String timeStr = weatherData.substring(timeStart, timeEnd);
+                benOS_addLine("");
+                benOS_addLine("Updated: " + timeStr);
+            }
+        } else {
+            benOS_addLine("Parse error");
         }
+        
     } else {
         benOS_addLine("Failed to fetch weather");
         benOS_addLine("Error: " + String(code));
@@ -2368,7 +2427,6 @@ void benOS_stocks(TFT_eSPI &tft) {
     benOS_addLine("Fetching indices...");
     benOS_redrawScreen(tft);
     
-    // Using Yahoo Finance alternative API
     const char* symbols[] = {"^GSPC", "^IXIC", "^DJI"};  // S&P 500, NASDAQ, Dow Jones
     const char* names[] = {"S&P 500", "NASDAQ", "Dow Jones"};
     
@@ -2377,40 +2435,61 @@ void benOS_stocks(TFT_eSPI &tft) {
     benOS_addLine("===================");
     benOS_addLine("");
     
-    for (int i = 0; i < 3; i++) {
-        HTTPClient http;
-        String url = "http://query1.finance.yahoo.com/v8/finance/chart/";
-        url += symbols[i];
-        url += "?interval=1d&range=1d";
+    // Use WiFiClientSecure for HTTPS
+    WiFiClientSecure *client = new WiFiClientSecure;
+    if (client) {
+        client->setInsecure();  // Skip certificate validation
         
-        http.begin(url);
-        http.setTimeout(5000);
-        http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);  // Follow redirects
-        
-        int code = http.GET();
-        
-        if (code == HTTP_CODE_OK) {
-            String response = http.getString();
+        for (int i = 0; i < 3; i++) {
+            HTTPClient http;
             
-            // Simple parse for current price
-            int priceIdx = response.indexOf("\"regularMarketPrice\":");
-            if (priceIdx > 0) {
-                String price = response.substring(priceIdx + 21, priceIdx + 35);
-                int commaIdx = price.indexOf(',');
-                if (commaIdx > 0) price = price.substring(0, commaIdx);
+            String url = "https://query1.finance.yahoo.com/v8/finance/chart/";
+            url += symbols[i];
+            url += "?interval=1d&range=1d";
+            
+            Serial.println("Fetching: " + url);
+            
+            if (http.begin(*client, url)) {
+                http.setTimeout(10000);
+                http.addHeader("User-Agent", "Mozilla/5.0");
                 
-                benOS_addLine(String(names[i]) + ":");
-                benOS_addLine("  " + price);
+                int code = http.GET();
+                Serial.println("Response code: " + String(code));
+                
+                if (code == HTTP_CODE_OK) {
+                    String response = http.getString();
+                    
+                    // Parse price from JSON
+                    int priceIdx = response.indexOf("\"regularMarketPrice\":");
+                    if (priceIdx > 0) {
+                        int priceStart = priceIdx + 21;
+                        int priceEnd = response.indexOf(',', priceStart);
+                        if (priceEnd < 0) priceEnd = response.indexOf('}', priceStart);
+                        
+                        String price = response.substring(priceStart, priceEnd);
+                        price.trim();
+                        
+                        benOS_addLine(String(names[i]) + ":");
+                        benOS_addLine("  " + price);
+                    } else {
+                        benOS_addLine(String(names[i]) + ": N/A");
+                    }
+                } else {
+                    benOS_addLine(String(names[i]) + ": Error " + String(code));
+                }
+                
+                http.end();
             } else {
-                benOS_addLine(String(names[i]) + ": N/A");
+                benOS_addLine(String(names[i]) + ": Connect failed");
             }
-        } else {
-            benOS_addLine(String(names[i]) + ": Error " + String(code));
+            
+            benOS_redrawScreen(tft);
+            delay(1000);
         }
         
-        http.end();
-        benOS_redrawScreen(tft);
-        delay(500);
+        delete client;
+    } else {
+        benOS_addLine("SSL client failed");
     }
     
     benOS_addLine("");
@@ -2595,11 +2674,38 @@ void benOS_webserver(TFT_eSPI &tft) {
 }
 
 
-// Forward declarations for web server functions
+// ========== FORWARD DECLARATIONS FOR WEB SERVER ==========
+void benOS_processWebServer();
 void serve404(WiFiClient &client);
 void serveFile(WiFiClient &client, const char *path);
 void serveStatus(WiFiClient &client);
+void serveOutput(WiFiClient &client);
 void serveCommand(WiFiClient &client, String path);
+void serveDefaultPage(WiFiClient &client);
+
+
+void serveOutput(WiFiClient &client) {
+    client.println("HTTP/1.1 200 OK");
+    client.println("Content-Type: application/json");
+    client.println("Access-Control-Allow-Origin: *");
+    client.println("Connection: close");
+    client.println();
+    
+    String json = "{";
+    json += "\"done\":" + String(benOS_webCommandDone ? "true" : "false") + ",";
+    json += "\"output\":\"";
+    
+    // Escape newlines and quotes for JSON
+    String escapedOutput = benOS_webCommandOutput;
+    escapedOutput.replace("\\", "\\\\");
+    escapedOutput.replace("\"", "\\\"");
+    escapedOutput.replace("\n", "\\n");
+    
+    json += escapedOutput;
+    json += "\"}";
+    
+    client.println(json);
+}
 
 // ========== ENHANCED WEB SERVER WITH API ==========
 
@@ -2608,16 +2714,18 @@ void benOS_processWebServer() {
     
     WiFiClient client = benOS_webServer->available();
     if (client) {
+        Serial.println("Web client connected!");
+        
         String request = "";
         String firstLine = "";
+        unsigned long timeout = millis();
         
-        while (client.connected()) {
+        while (client.connected() && millis() - timeout < 2000) {
             if (client.available()) {
                 char c = client.read();
                 request += c;
                 
                 if (firstLine == "" && c == '\n') {
-                    // Capture first line
                     int endOfLine = request.indexOf('\n');
                     if (endOfLine > 0) {
                         firstLine = request.substring(0, endOfLine);
@@ -2640,66 +2748,122 @@ void benOS_processWebServer() {
         
         Serial.println("Web request: " + path);
         
-        // Route requests
-        if (path == "/" || path == "/index.html") {
-            serveFile(client, "/www/index.html");
-        }
-        else if (path == "/api/status") {
-            serveStatus(client);
-        }
-        else if (path.startsWith("/api/command")) {
-            serveCommand(client, path);
-        }
-        else if (path == "/api/reboot") {
-            client.println("HTTP/1.1 200 OK");
-            client.println("Content-Type: text/plain");
-            client.println("Connection: close");
-            client.println();
-            client.println("Rebooting...");
-            client.stop();
-            delay(1000);
-            ESP.restart();
-        }
-        else {
-            serve404(client);
-        }
-        
-        client.stop();
+// Route requests
+if (path == "/" || path == "/index.html") {
+    if (SD.exists("/www/index.html")) {
+        serveFile(client, "/www/index.html");
+    } else {
+        serveDefaultPage(client);
     }
+}
+else if (path == "/api/status") {
+    serveStatus(client);
+}
+else if (path == "/api/output") {  
+    serveOutput(client);
+}    
+else if (path.startsWith("/api/command")) {
+    serveCommand(client, path);
+}
+else if (path == "/api/reboot") {
+    client.println("HTTP/1.1 200 OK");
+    client.println("Content-Type: text/plain");
+    client.println("Connection: close");
+    client.println();
+    client.println("Rebooting...");
+    client.stop();
+    delay(1000);
+    ESP.restart();
+}
+else {
+    serve404(client);
+}
+        
+        delay(10);
+        client.stop();
+        Serial.println("Client disconnected");
+    }
+}  // ← MAKE SURE THIS CLOSING BRACE IS HERE!
+
+void serveDefaultPage(WiFiClient &client) {
+    client.println("HTTP/1.1 200 OK");
+    client.println("Content-Type: text/html");
+    client.println("Connection: close");
+    client.println();
+    
+    client.println("<!DOCTYPE HTML>");
+    client.println("<html>");
+    client.println("<head>");
+    client.println("<title>BenOS Control Panel</title>");
+    client.println("<meta name='viewport' content='width=device-width, initial-scale=1'>");
+    client.println("<style>");
+    client.println("body { background: #000; color: #0f0; font-family: monospace; margin: 20px; }");
+    client.println("h1 { color: #0f0; text-align: center; }");
+    client.println(".box { border: 2px solid #0f0; padding: 15px; margin: 10px 0; }");
+    client.println("button { background: #0f0; color: #000; border: none; padding: 10px 20px; margin: 5px; cursor: pointer; font-family: monospace; }");
+    client.println("</style>");
+    client.println("</head>");
+    client.println("<body>");
+    client.println("<h1>BenOS Control Panel</h1>");
+    client.println("<div class='box'>");
+    client.println("<h2>System Status</h2>");
+    client.println("<p>Uptime: " + String(millis() / 1000) + " seconds</p>");
+    client.println("<p>Free Memory: " + String(ESP.getFreeHeap() / 1024) + " KB</p>");
+    client.println("<p>IP: " + WiFi.localIP().toString() + "</p>");
+    client.println("</div>");
+    client.println("</body>");
+    client.println("</html>");
 }
 
 void serveFile(WiFiClient &client, const char* filepath) {
+    Serial.print("Attempting to serve: ");
+    Serial.println(filepath);
+    
     if (!SD.exists(filepath)) {
+        Serial.println("File not found");
         serve404(client);
         return;
     }
     
     File file = SD.open(filepath);
     if (!file) {
+        Serial.println("Failed to open");
         serve404(client);
         return;
     }
     
+    Serial.print("File size: ");
+    Serial.println(file.size());
+    
+    // Send HTTP headers
     client.println("HTTP/1.1 200 OK");
+    
     if (String(filepath).endsWith(".html")) {
-        client.println("Content-Type: text/html");
+        client.println("Content-Type: text/html; charset=UTF-8");
     } else if (String(filepath).endsWith(".css")) {
         client.println("Content-Type: text/css");
     } else if (String(filepath).endsWith(".js")) {
         client.println("Content-Type: application/javascript");
     }
+    
     client.println("Connection: close");
-    client.println();
+    client.println();  // ← CRITICAL: Blank line separates headers from body
+    
+    // Send file contents
+    const size_t bufferSize = 512;
+    uint8_t buffer[bufferSize];
     
     while (file.available()) {
-        client.write(file.read());
+        size_t len = file.read(buffer, bufferSize);
+        client.write(buffer, len);
+        delay(1);
     }
     
     file.close();
+    Serial.println("File sent");
 }
 
 void serveStatus(WiFiClient &client) {
-    // Build JSON status
     unsigned long uptime = millis() / 1000;
     int hours = uptime / 3600;
     int mins = (uptime % 3600) / 60;
@@ -2718,13 +2882,13 @@ void serveStatus(WiFiClient &client) {
     
     client.println("HTTP/1.1 200 OK");
     client.println("Content-Type: application/json");
+    client.println("Access-Control-Allow-Origin: *");
     client.println("Connection: close");
     client.println();
     client.println(json);
 }
 
 void serveCommand(WiFiClient &client, String path) {
-    // Extract command parameter
     int cmdStart = path.indexOf("cmd=") + 4;
     String cmd = "";
     
@@ -2732,25 +2896,29 @@ void serveCommand(WiFiClient &client, String path) {
         int cmdEnd = path.indexOf("&", cmdStart);
         if (cmdEnd < 0) cmdEnd = path.length();
         cmd = path.substring(cmdStart, cmdEnd);
-        
-        // URL decode
         cmd.replace("%20", " ");
         cmd.replace("+", " ");
     }
     
     client.println("HTTP/1.1 200 OK");
     client.println("Content-Type: text/plain");
+    client.println("Access-Control-Allow-Origin: *");
     client.println("Connection: close");
     client.println();
     
     if (cmd.length() > 0) {
-        client.println("Executing: " + cmd);
-        client.println("Command sent to BenOS");
-        client.println("Check device display for output");
-        
-        Serial.println("Web command received: " + cmd);
+        // Add command to queue
+        if (benOS_webCommandCount < MAX_WEB_COMMANDS) {
+            benOS_webCommandQueue[benOS_webCommandCount++] = cmd;
+            client.println("Command queued: " + cmd);
+            client.println("Command will execute on device");
+            Serial.println("Web command queued: " + cmd);
+        } else {
+            client.println("Error: Command queue full");
+            Serial.println("Command queue full!");
+        }
     } else {
-        client.println("Error: No command specified");
+        client.println("Error: No command");
     }
 }
 
@@ -2759,13 +2927,37 @@ void serve404(WiFiClient &client) {
     client.println("Content-Type: text/html");
     client.println("Connection: close");
     client.println();
-    client.println("<!DOCTYPE HTML>");
     client.println("<html><body style='background:#000;color:#0f0;font-family:monospace;'>");
     client.println("<h1>404 - Not Found</h1>");
-    client.println("<p>The requested resource was not found on this server.</p>");
-    client.println("<a href='/' style='color:#0f0;'>Return to BenOS Control Panel</a>");
+    client.println("<a href='/' style='color:#0f0;'>Return Home</a>");
     client.println("</body></html>");
 }
+
+// ========== BUTTON WAIT HELPER ==========
+void benOS_waitForButton() {
+    while (digitalRead(PIN_KO) == LOW) {
+        benOS_processWebServer();
+        delay(10);
+    }
+    delay(200);
+    
+    int lastBtn = HIGH;
+    while (true) {
+        benOS_processWebServer();
+        
+        int btn = digitalRead(PIN_KO);
+        if (btn == LOW && lastBtn == HIGH) break;
+        lastBtn = btn;
+        delay(50);
+    }
+    
+    while (digitalRead(PIN_KO) == LOW) {
+        benOS_processWebServer();
+        delay(10);
+    }
+    delay(200);
+}
+
 // ========== MUSIC PLAYER ==========
 
 void benOS_play(TFT_eSPI &tft) {
@@ -3365,13 +3557,77 @@ while (!exitOS) {
     benOS_processDNSRequest();
     
     // Process web server requests
-    benOS_processWebServer();  // ← ADD THIS NEW LINE
+    benOS_processWebServer();
     
-    int cmdIdx = benOS_selectCommand(tft);
-    String cmd = benOS_commands[cmdIdx];
-                
+    // Declare variables BEFORE any goto
+    int cmdIdx = -1;
+    String cmd = "";
+    bool fromWeb = false;
+    
+    // ========== CHECK FOR WEB COMMANDS ========== 
+if (benOS_webCommandCount > 0) {
+    Serial.println("=== WEB COMMAND DETECTED ===");
+    Serial.print("Queue count: ");
+    Serial.println(benOS_webCommandCount);
+    
+    // Get the first command from queue
+    String webCmd = benOS_webCommandQueue[0];
+    Serial.print("Command: ");
+    Serial.println(webCmd);
+    
+    // Shift queue down
+    for (int i = 0; i < benOS_webCommandCount - 1; i++) {
+        benOS_webCommandQueue[i] = benOS_webCommandQueue[i + 1];
+    }
+    benOS_webCommandCount--;
+    
+    // Find command index
+    for (int i = 0; i < benOS_numCommands; i++) {
+        if (String(benOS_commands[i]) == webCmd) {
+            cmdIdx = i;
+            Serial.print("Found command at index: ");
+            Serial.println(cmdIdx);
+            break;
+        }
+    }
+    
+    // Execute the web command
+    if (cmdIdx >= 0) {
+        Serial.println("Executing web command...");
+        benOS_lastSelectedCommand = cmdIdx;
+        cmd = benOS_commands[cmdIdx];
+        fromWeb = true;
+        
+        // Clear output buffer
+        benOS_webCommandOutput = "";
+        benOS_webCommandDone = false;
+        
+        benOS_clearScreen(tft);
+        benOS_addLine("[WEB] > " + cmd);
+        
+        // Jump to command execution
+        goto execute_command;
+    } else {
+        Serial.println("ERROR: Command not found in command list!");
+    }
+}
+
+// Get command from menu
+cmdIdx = benOS_selectCommand(tft);
+
+// If -1, it means a web command is waiting, loop back to check it
+if (cmdIdx == -1) {
+    continue;  // Skip to next iteration of while (!exitOS)
+}
+
+cmd = benOS_commands[cmdIdx];
+
+execute_command:
+    
+    if (!fromWeb) {
         benOS_clearScreen(tft);
         benOS_addLine("> " + cmd);
+    }
         
 if (cmd == "help") {
             benOS_showHelp(tft);
@@ -3567,30 +3823,31 @@ if (cmd == "help") {
         }
         else if (cmd == "exit") {
             exitOS = true;
+            benOS_lastSelectedCommand = 0;
             break;
         }
+
+        // ========== CAPTURE OUTPUT FOR WEB COMMANDS ==========
+        if (fromWeb) {
+            // Copy display buffer to web output
+            benOS_webCommandOutput = "";
+            for (int i = 0; i < benOS_totalLines && i < BENOS_MAX_LINES; i++) {
+                benOS_webCommandOutput += benOS_displayBuffer[i] + "\n";
+            }
+            benOS_webCommandDone = true;
+        }
         
-        if (!exitOS && cmd != "image" && cmd != "themes" && cmd != "play" && cmd != "fart" && cmd != "timer" && cmd != "ascii" && cmd != "cowsay" && cmd != "qrcode") {
+        if (!exitOS && cmd != "image" && cmd != "themes" && cmd != "play" && cmd != "fart" && cmd != "timer" && cmd != "ascii" && cmd != "cowsay" && cmd != "qrcode" && cmd != "webserver" && !fromWeb) {
             benOS_addLine("");
             benOS_addLine("Press button to continue...");
             benOS_redrawScreen(tft);
             
-            while (digitalRead(PIN_KO) == LOW) delay(10);
-            delay(200);
-            
-            lastBtn = HIGH;
-            while (true) {
-                int btn = digitalRead(PIN_KO);
-                if (btn == LOW && lastBtn == HIGH) break;
-                lastBtn = btn;
-                delay(50);
-            }
-            
-            while (digitalRead(PIN_KO) == LOW) delay(10);
-            delay(200);
+            benOS_waitForButton();
         }
+        
+    }  // ← Close while (!exitOS) loop
     
     tft.fillScreen(TFT_BLACK);
-}
-}
+}  // ← Close run_BenOS() function
+
 #endif // BENOS_H
