@@ -1395,17 +1395,81 @@ void benOS_showHelp(TFT_eSPI &tft) {
 const char* benOS_commands[] = {
     "help", "version", "time", "synctime", "wifi", "wifiscan", "dig", "curl",
     "ping", "sysinfo", "speedtest", "passgen", "qrcode", "ascii", "cowsay",
-    "weather", "stocks", "news", "webserver", "playmusic", "fart", "timer",  // ← Changed "play" to "playmusic"
-    "calc", "write", "read", "delete", "ls", "image",
-    "themes", "dnsstart", "dnsstop", "dnsstatus", "clock", "clear", "exit"  // ← Added "clock"
+    "weather", "stocks", "news", "webserver", "playmusic", "fart", "timer",
+    "calc", "write", "read", "delete", "ls", "image", "whoami",  // ← Added here
+    "themes", "dnsstart", "dnsstop", "dnsstatus", "clock", "clear", "exit"
 };
-const int benOS_numCommands = 35;  // ← Update count
+const int benOS_numCommands = 36;  // ← Update count
+
+// ========== STATUS BAR ==========
+
+void benOS_drawStatusBar(TFT_eSPI &tft, bool centerText = false, String centerTitle = "") {
+    // Draw at top of screen
+    tft.setTextFont(1);
+    tft.setTextDatum(TL_DATUM);
+    
+    // Left side: Wi-Fi status
+    if (WiFi.status() == WL_CONNECTED) {
+        int rssi = WiFi.RSSI();
+        String wifiIcon = "";
+        uint16_t wifiColor = TFT_GREEN;
+        
+        // Signal strength bars
+        if (rssi > -50) {
+            wifiIcon = "[||||]";
+            wifiColor = TFT_GREEN;
+        } else if (rssi > -60) {
+            wifiIcon = "[|||.]";
+            wifiColor = TFT_GREEN;
+        } else if (rssi > -70) {
+            wifiIcon = "[||..]";
+            wifiColor = TFT_YELLOW;
+        } else if (rssi > -80) {
+            wifiIcon = "[|...]";
+            wifiColor = TFT_ORANGE;
+        } else {
+            wifiIcon = "[....]";
+            wifiColor = TFT_RED;
+        }
+        
+        tft.setTextColor(wifiColor, benOS_themes[benOS_currentTheme].bg);
+        tft.drawString(wifiIcon, 2, 2);
+    } else {
+        tft.setTextColor(TFT_RED, benOS_themes[benOS_currentTheme].bg);
+        tft.drawString("[X]", 2, 2);
+    }
+    
+    // Center text if provided
+    if (centerText && centerTitle.length() > 0) {
+        tft.setTextFont(4);
+        tft.setTextDatum(TC_DATUM);
+        tft.setTextColor(benOS_themes[benOS_currentTheme].fg, benOS_themes[benOS_currentTheme].bg);
+        tft.drawString(centerTitle, 160, 5);
+    }
+    
+    // Right side: Time
+    tft.setTextFont(1);
+    tft.setTextDatum(TR_DATUM);
+    
+    time_t now = time(nullptr);
+    if (now > 100000) {
+        struct tm* t = localtime(&now);
+        char timeStr[6];
+        sprintf(timeStr, "%02d:%02d", t->tm_hour, t->tm_min);
+        tft.setTextColor(TFT_CYAN, benOS_themes[benOS_currentTheme].bg);
+        tft.drawString(timeStr, 318, 2);
+    } else {
+        tft.setTextColor(TFT_DARKGREY, benOS_themes[benOS_currentTheme].bg);
+        tft.drawString("--:--", 318, 2);
+    }
+}
 
 int benOS_selectCommand(TFT_eSPI &tft) {
     int selected = benOS_lastSelectedCommand;
     int lastSelected = -1;
     int lastRotary = rotaryPos;
     int lastBtn = HIGH;
+    unsigned long lastStatusUpdate = 0;  // ← Add this
     unsigned long lastMenuActivity = millis();  // ← ADD: Track menu activity
     
     while (true) {
@@ -1415,6 +1479,12 @@ int benOS_selectCommand(TFT_eSPI &tft) {
         if (millis() - lastMenuActivity > 60000) {  // 60 seconds idle
             return -2;  // Special return code for screensaver
         }
+
+        // ========== UPDATE STATUS BAR EVERY SECOND ==========
+    if (millis() - lastStatusUpdate > 1000) {
+        lastStatusUpdate = millis();
+        benOS_drawStatusBar(tft, true, "BenOS Menu");
+    }
         
         // Check for web commands
         if (benOS_webCommandCount > 0) {
@@ -1422,13 +1492,12 @@ int benOS_selectCommand(TFT_eSPI &tft) {
             return -1;
         }
         
-        if (selected != lastSelected) {
-            tft.fillScreen(benOS_themes[benOS_currentTheme].bg);
-            tft.setTextColor(benOS_themes[benOS_currentTheme].fg, benOS_themes[benOS_currentTheme].bg);
-            
-            tft.setTextFont(4);
-            tft.setTextDatum(TC_DATUM);
-            tft.drawString("BenOS Menu", 160, 5);
+if (selected != lastSelected) {
+    tft.fillScreen(benOS_themes[benOS_currentTheme].bg);
+    tft.setTextColor(benOS_themes[benOS_currentTheme].fg, benOS_themes[benOS_currentTheme].bg);
+    
+    // Draw status bar with title
+    benOS_drawStatusBar(tft, true, "BenOS Menu");
             
             int startIdx = selected - 4;
             if (startIdx < 0) startIdx = 0;
@@ -4208,6 +4277,74 @@ if (cmd == "help") {
         else if (cmd == "sysinfo") {
             benOS_sysinfo(tft);
         }
+        else if (cmd == "whoami") {
+    benOS_clearScreen(tft);
+    benOS_addLine("=== System Identity ===");
+    benOS_addLine("");
+    
+    // Device info
+    benOS_addLine("DEVICE:");
+    benOS_addLine("  OS: " + String(BenOS_Config::OS_VERSION));
+    benOS_addLine("  Chip: " + String(ESP.getChipModel()));
+    benOS_addLine("  Cores: " + String(ESP.getChipCores()));
+    benOS_addLine("  CPU: " + String(ESP.getCpuFreqMHz()) + " MHz");
+    
+    // Uptime
+    unsigned long uptime = millis() / 1000;
+    int days = uptime / 86400;
+    int hours = (uptime % 86400) / 3600;
+    int mins = (uptime % 3600) / 60;
+    String uptimeStr = "";
+    if (days > 0) uptimeStr += String(days) + "d ";
+    uptimeStr += String(hours) + "h " + String(mins) + "m";
+    benOS_addLine("  Uptime: " + uptimeStr);
+    
+    benOS_addLine("");
+    
+    // Network info
+    if (WiFi.status() == WL_CONNECTED) {
+        benOS_addLine("NETWORK:");
+        benOS_addLine("  Status: Connected");
+        benOS_addLine("  SSID: " + WiFi.SSID());
+        benOS_addLine("  MAC: " + WiFi.macAddress());
+        benOS_addLine("");
+        
+        benOS_addLine("  IP: " + WiFi.localIP().toString());
+        benOS_addLine("  Subnet: " + WiFi.subnetMask().toString());
+        benOS_addLine("  Gateway: " + WiFi.gatewayIP().toString());
+        
+        benOS_addLine("");
+        benOS_addLine("  DNS 1: " + WiFi.dnsIP(0).toString());
+        IPAddress dns2 = WiFi.dnsIP(1);
+        if (dns2[0] != 0) {
+            benOS_addLine("  DNS 2: " + dns2.toString());
+        }
+        
+        benOS_addLine("");
+        benOS_addLine("  RSSI: " + String(WiFi.RSSI()) + " dBm");
+        benOS_addLine("  Channel: " + String(WiFi.channel()));
+        benOS_addLine("  Hostname: " + String(WiFi.getHostname()));
+        
+    } else {
+        benOS_addLine("NETWORK:");
+        benOS_addLine("  Status: Disconnected");
+        benOS_addLine("  MAC: " + WiFi.macAddress());
+    }
+    
+    benOS_addLine("");
+    
+    // Services
+    benOS_addLine("SERVICES:");
+    if (benOS_webServerRunning) {
+        benOS_addLine("  Web: Running (port 80)");
+    }
+    if (benOS_dnsServerRunning) {
+        benOS_addLine("  DNS: Running (port 53)");
+        benOS_addLine("    Overrides: " + String(benOS_numDNSOverrides));
+    }
+    
+    benOS_redrawScreen(tft);
+}
         else if (cmd == "ping") {
             if (benOS_ensureWiFi(tft)) {
                 String host = benOS_selectPingHost(tft);
